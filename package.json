@@ -4,7 +4,9 @@
   "description": "Schift Extension for Codex and Claude: runtime wiring, lifecycle hooks, and local APM authoring.",
   "private": false,
   "type": "module",
-  "bin": "bin/schift-extension.mjs",
+  "bin": {
+    "extension": "bin/schift-extension.mjs"
+  },
   "scripts": {
     "test": "PYTHONPATH=src python3 -m unittest discover -s tests -v",
     "smoke": "bash scripts/smoke.sh",
