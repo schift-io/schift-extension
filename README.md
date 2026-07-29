@@ -139,9 +139,12 @@ npx --yes --package=@schift-io/extension@latest extension publish \
 ```
 
 The credential must resolve to a Schift user with an active organization and
-either `agents:manage` or organization-admin access. A document-ingest-only
-key cannot publish APMs; the command exits with a specific authorization error
-instead of claiming a release succeeded.
+either `agents:manage` or organization-admin access. Set
+`SCHIFT_APM_PUBLISH_API_KEY` when the publisher key is separate from the
+document-ingest `SCHIFT_API_KEY`; the extension stores both only in its private
+`~/.schift/ai-memory/config.json`. A document-ingest-only key cannot publish
+APMs; the command exits with a specific authorization error instead of claiming
+a release succeeded.
 
 ## Studio MCP Upload
 

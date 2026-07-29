@@ -604,6 +604,7 @@ def _provision_env_config(root: Path, env_file: Path, dry_run: bool) -> Path:
     config.update({
         "api_base_url": api_base_url.rstrip("/"),
         "api_key": api_key,
+        "apm_publish_api_key": values.get("SCHIFT_APM_PUBLISH_API_KEY") or config.get("apm_publish_api_key"),
         "bucket": values.get("SCHIFT_COMPANY_BUCKET") or values.get("SCHIFT_DEFAULT_BUCKET") or "default",
         "collection": values.get("SCHIFT_COLLECTION") or "__schift_ai_daily_log",
         "status": "configured_from_env_file",
@@ -617,16 +618,16 @@ def _publisher_credentials(*, root: Path, env_file: Path | None) -> tuple[str, s
     if env_file is not None:
         values = _env_values(env_file)
         api_base_url = values.get("SCHIFT_API_BASE_URL") or values.get("SCHIFT_API_URL")
-        api_key = values.get("SCHIFT_API_KEY")
+        api_key = values.get("SCHIFT_APM_PUBLISH_API_KEY") or values.get("SCHIFT_API_KEY")
     else:
         config_path = root / ".schift" / "ai-memory" / "config.json"
         config = _json_object(config_path)
         api_base_url = str(config.get("api_base_url") or "")
-        api_key = str(config.get("api_key") or "")
+        api_key = str(config.get("apm_publish_api_key") or config.get("api_key") or "")
     if not api_base_url or not api_key:
         source = str(env_file) if env_file is not None else str(root / ".schift" / "ai-memory" / "config.json")
         raise ValueError(
-            "APM publish needs SCHIFT_API_URL and SCHIFT_API_KEY. "
+            "APM publish needs SCHIFT_API_URL and SCHIFT_APM_PUBLISH_API_KEY (or SCHIFT_API_KEY). "
             f"No usable private credential was found in {source}."
         )
     return api_base_url.rstrip("/"), api_key

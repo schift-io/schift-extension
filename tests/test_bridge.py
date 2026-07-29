@@ -81,7 +81,7 @@ class ApmBridgeTests(unittest.TestCase):
             )
             env_file = root / ".env.local"
             env_file.write_text(
-                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\n",
+                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_ingest_key\nSCHIFT_APM_PUBLISH_API_KEY=sch_publish_key\n",
                 encoding="utf-8",
             )
             pack = create_pack(
@@ -259,7 +259,7 @@ class ApmBridgeTests(unittest.TestCase):
             )
             env_file = root / ".env.local"
             env_file.write_text(
-                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\n",
+                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_ingest_key\nSCHIFT_APM_PUBLISH_API_KEY=sch_publish_key\n",
                 encoding="utf-8",
             )
             calls: list[dict] = []
@@ -272,6 +272,7 @@ class ApmBridgeTests(unittest.TestCase):
                     self.assertEqual(body["visibility"], "private")
                     self.assertEqual(body["allowed_orgs"], ["room821"])
                     self.assertTrue(b64decode(body["apm_b64"]))
+                    self.assertEqual(kwargs["api_key"], "sch_publish_key")
                     return {
                         "ok": True,
                         "ref": {
