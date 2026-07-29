@@ -25,7 +25,7 @@ During repository development:
 
 ```bash
 node bin/schift-extension.mjs install --host both --dry-run
-node bin/schift-extension.mjs studio
+node bin/schift-extension.mjs studio --env-file .env.local
 ```
 
 `install` safely merges only its marked entries:
@@ -65,7 +65,7 @@ node bin/schift-extension.mjs publish ./apm-workspace/customer-brief.agent \
   --env-file .env.local
 
 # Open the local structured authoring window.
-node bin/schift-extension.mjs studio
+node bin/schift-extension.mjs studio --env-file .env.local
 ```
 
 The generated folder contains:

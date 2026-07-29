@@ -186,6 +186,7 @@ def cmd_studio(args: argparse.Namespace) -> int:
         port=args.port,
         output=Path(args.output).expanduser(),
         open_browser=not args.no_open,
+        env_file=Path(args.env_file).expanduser() if args.env_file else None,
     )
     return 0
 
@@ -290,6 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     studio.add_argument("--host", default="127.0.0.1")
     studio.add_argument("--port", type=int, default=8786)
     studio.add_argument("--output", default="./apm-workspace")
+    studio.add_argument("--env-file", help="provision the local private Schift MCP config before a Studio runtime install")
     studio.add_argument("--no-open", action="store_true")
     studio.set_defaults(func=cmd_studio)
     return parser

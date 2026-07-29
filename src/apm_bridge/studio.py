@@ -64,6 +64,7 @@ def upload_manifest_via_mcp(*, manifest: Path) -> dict:
 
 class StudioHandler(SimpleHTTPRequestHandler):
     output = Path("./apm-workspace")
+    env_file: Path | None = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
@@ -114,6 +115,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     hosts=["claude", "codex"],
                     root=Path.home(),
                     hooks=True,
+                    env_file=self.env_file,
                 )
                 self._json(
                     HTTPStatus.OK,
@@ -148,8 +150,11 @@ class StudioHandler(SimpleHTTPRequestHandler):
             self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)})
 
 
-def run_studio(*, host: str, port: int, output: Path, open_browser: bool) -> None:
+def run_studio(
+    *, host: str, port: int, output: Path, open_browser: bool, env_file: Path | None = None
+) -> None:
     StudioHandler.output = output.resolve()
+    StudioHandler.env_file = env_file.expanduser().resolve() if env_file else None
     server = ThreadingHTTPServer((host, port), StudioHandler)
     url = f"http://{host}:{port}"
     print(f"APM Studio: {url}")

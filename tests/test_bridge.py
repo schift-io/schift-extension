@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from argparse import Namespace
 from base64 import b64decode
 from io import BytesIO
 from pathlib import Path
@@ -21,10 +22,24 @@ from apm_bridge.core import (
     validate_pack,
     verify_deployment,
 )
+from apm_bridge.cli import cmd_studio
 from apm_bridge.studio import resolve_generated_manifest, stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_studio_forwards_env_file_to_runtime_install(self) -> None:
+        with patch("apm_bridge.studio.run_studio") as run_studio:
+            cmd_studio(
+                Namespace(
+                    host="127.0.0.1",
+                    port=8786,
+                    output="./apm-workspace",
+                    no_open=True,
+                    env_file="~/.env.local",
+                )
+            )
+        self.assertEqual(run_studio.call_args.kwargs["env_file"], Path("~/.env.local").expanduser())
+
     def test_runtime_adapter_is_injected_without_host_specific_branching(self) -> None:
         class FixtureAdapter(HostRuntimeAdapter):
             name = "fixture"
