@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 from uuid import uuid4
 import webbrowser
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 from apm_bridge.core import CONNECTORS, create_pack, validate_pack
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
+MCP_UPLOADER = Path(__file__).resolve().parents[1] / "mcp-upload.mjs"
 
 
 def stage_dropped_source(*, destination: Path, name: str, content: str) -> Path:
@@ -27,6 +29,37 @@ def stage_dropped_source(*, destination: Path, name: str, content: str) -> Path:
     source = imports / f"{uuid4().hex}-{filename}"
     source.write_text(content, encoding="utf-8")
     return source
+
+
+def resolve_generated_manifest(*, destination: Path, value: str) -> Path:
+    candidate = Path(value).expanduser().resolve()
+    manifest = candidate / "pack.json" if candidate.is_dir() else candidate
+    output = destination.resolve()
+    if manifest.name != "pack.json" or output not in manifest.parents:
+        raise ValueError("MCP upload accepts only a generated pack.json inside this Studio output folder")
+    if not manifest.is_file():
+        raise ValueError("generated pack.json no longer exists")
+    return manifest
+
+
+def upload_manifest_via_mcp(*, manifest: Path) -> dict:
+    result = subprocess.run(
+        ["node", str(MCP_UPLOADER), str(manifest)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    try:
+        response = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        detail = result.stderr.strip() or "MCP upload returned an invalid response"
+        raise ValueError(detail) from error
+    if not response.get("ok"):
+        raise ValueError(str(response.get("error") or "MCP upload failed"))
+    if result.returncode != 0:
+        raise ValueError("MCP upload failed")
+    return response
 
 
 class StudioHandler(SimpleHTTPRequestHandler):
@@ -51,7 +84,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         route = urlparse(self.path).path
-        if route not in {"/api/create", "/api/import"}:
+        if route not in {"/api/create", "/api/import", "/api/upload-mcp"}:
             self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             return
         try:
@@ -64,6 +97,13 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     content=str(payload["content"]),
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "source": str(source), "name": source.name})
+                return
+            if route == "/api/upload-mcp":
+                manifest = resolve_generated_manifest(
+                    destination=self.output, value=str(payload["pack"])
+                )
+                upload = upload_manifest_via_mcp(manifest=manifest)
+                self._json(HTTPStatus.OK, {"ok": True, "upload": upload})
                 return
             source = Path(payload["source"]).expanduser() if payload.get("source") else None
             pack = create_pack(

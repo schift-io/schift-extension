@@ -78,6 +78,24 @@ customer-brief.agent/
 The local UI is intentionally a structured editor, not a YAML editor. YAML
 remains an emitted review artifact because existing APM tooling consumes it.
 
+## Studio MCP Upload
+
+After a local build, Studio exposes an explicit **Upload manifest to Schift
+MCP** action. It queues the generated `pack.json` through
+`schift_upload_document` so the APM definition is searchable in Schift. The
+sealed `.apm` remains local: MCP carries knowledge, not APM registry releases.
+
+The action uses the same private local MCP configuration installed for Codex
+and Claude. Provision it from the current repository environment before using
+Studio:
+
+```bash
+npx -y @schift-io/extension@latest install --host both --env-file .env.local
+```
+
+The configured key must have `buckets:manage`, which is required by Schift's
+document upload contract.
+
 ## Verification
 
 `verify` creates `.venv-schift-extension` beside the package when needed,

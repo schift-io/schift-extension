@@ -56,7 +56,35 @@ function renderResult(payload, isError = false) {
   result.classList.toggle("is-error", isError);
   result.classList.toggle("is-success", !isError);
   const messages = payload.messages || [payload.error];
-  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2><ul>${messages.map((message) => `<li>${escapeHTML(message)}</li>`).join("")}</ul>${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}`;
+  const upload = payload.pack && !isError
+    ? `<button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Upload manifest to Schift MCP</button><span id="upload-state">Keeps the sealed .apm local. Queues pack.json for Schift search.</span>`
+    : "";
+  const detail = isError
+    ? `<span>${escapeHTML(messages[0] || "Build failed")}</span>`
+    : `<span>${messages.length} local checks passed</span>`;
+  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}${upload}`;
+  result.querySelector("#upload-mcp")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const state = result.querySelector("#upload-state");
+    button.disabled = true;
+    button.textContent = "Queueing through MCP";
+    state.textContent = "Starting the local Schift MCP client...";
+    try {
+      const response = await fetch("/api/upload-mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: button.dataset.pack }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body.ok) throw new Error(body.error || "MCP upload failed");
+      state.textContent = `${body.upload.file_name} queued as ${body.upload.job_id || "an MCP job"}.`;
+      button.textContent = "Manifest queued";
+    } catch (error) {
+      state.textContent = `MCP upload failed: ${error.message}`;
+      button.disabled = false;
+      button.textContent = "Retry MCP upload";
+    }
+  });
 }
 
 async function stageDroppedFile(file) {

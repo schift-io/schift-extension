@@ -6,10 +6,26 @@ import unittest
 from pathlib import Path
 
 from apm_bridge.core import create_pack, install_extension, uninstall_extension, validate_pack
-from apm_bridge.studio import stage_dropped_source
+from apm_bridge.studio import resolve_generated_manifest, stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_mcp_upload_only_accepts_generated_pack_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "workspace"
+            pack = output / "sample.agent"
+            pack.mkdir(parents=True)
+            manifest = pack / "pack.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            self.assertEqual(
+                resolve_generated_manifest(destination=output, value=str(manifest)), manifest.resolve()
+            )
+            self.assertEqual(
+                resolve_generated_manifest(destination=output, value=str(pack)), manifest.resolve()
+            )
+            with self.assertRaises(ValueError):
+                resolve_generated_manifest(destination=output, value=str(pack / "agent.md"))
+
     def test_dropped_markdown_source_is_staged_for_pack_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = stage_dropped_source(

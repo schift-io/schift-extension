@@ -1,6 +1,6 @@
 {
   "name": "@schift-io/extension",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Schift Extension for Codex and Claude: runtime wiring, lifecycle hooks, and local APM authoring.",
   "private": false,
   "type": "module",
@@ -22,10 +22,14 @@
     "src/apm_bridge/cli.py",
     "src/apm_bridge/core.py",
     "src/apm_bridge/studio.py",
+    "src/mcp-upload.mjs",
     "src/web",
     "scripts",
     "README.md",
     "DESIGN.md"
   ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.4.0"
+  },
   "license": "Apache-2.0"
 }
