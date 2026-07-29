@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from apm_bridge.core import (
+    HostRuntimeAdapter,
+    McpRuntimeSpec,
     create_pack,
     deploy_pack,
     install_extension,
@@ -18,6 +20,54 @@ from apm_bridge.studio import resolve_generated_manifest, stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_runtime_adapter_is_injected_without_host_specific_branching(self) -> None:
+        class FixtureAdapter(HostRuntimeAdapter):
+            name = "fixture"
+
+            def __init__(self) -> None:
+                self.installed: list[tuple[Path, McpRuntimeSpec]] = []
+                self.uninstalled: list[tuple[Path, McpRuntimeSpec]] = []
+
+            def install(self, *, root: Path, runtime: McpRuntimeSpec, hooks: bool, dry_run: bool) -> list[Path]:
+                self.installed.append((root, runtime))
+                return [root / "fixture-install"]
+
+            def uninstall(self, *, root: Path, runtime: McpRuntimeSpec, purge_local_data: bool) -> list[Path]:
+                self.uninstalled.append((root, runtime))
+                return [root / "fixture-uninstall"]
+
+            def skill_path(self, root: Path, agent_id: str) -> Path:
+                return root / "fixture" / agent_id
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = FixtureAdapter()
+            runtime = McpRuntimeSpec(
+                server_name="fixture-mcp",
+                command="fixture-command",
+                args=("serve",),
+                legacy_args=(),
+            )
+            installed = install_extension(
+                hosts=["fixture"],
+                root=root,
+                hooks=False,
+                dry_run=False,
+                adapters={"fixture": adapter},
+                runtime=runtime,
+            )
+            removed = uninstall_extension(
+                hosts=["fixture"],
+                root=root,
+                purge_local_data=False,
+                adapters={"fixture": adapter},
+                runtime=runtime,
+            )
+            self.assertEqual(installed, [root / "fixture-install"])
+            self.assertEqual(removed, [root / "fixture-uninstall"])
+            self.assertEqual(adapter.installed[0][1].server_name, "fixture-mcp")
+            self.assertEqual(adapter.uninstalled[0][1].command, "fixture-command")
+
     def test_deploy_installs_claude_and_codex_server_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -153,7 +203,10 @@ class ApmBridgeTests(unittest.TestCase):
             )
             install_extension(hosts=["claude"], root=root, hooks=False, dry_run=False)
             config = json.loads((root / ".claude.json").read_text(encoding="utf-8"))
-            self.assertEqual(config["mcpServers"]["schift"]["args"], ["-y", "@schift-io/mcp"])
+            self.assertEqual(
+                config["mcpServers"]["schift"]["args"],
+                ["--yes", "--package=@schift-io/mcp", "schift-mcp"],
+            )
             uninstall_extension(hosts=["claude"], root=root, purge_local_data=False)
             config = json.loads((root / ".claude.json").read_text(encoding="utf-8"))
             self.assertNotIn("schift", config.get("mcpServers", {}))

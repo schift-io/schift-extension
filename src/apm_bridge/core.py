@@ -106,7 +106,7 @@ def _native_mcp_config() -> dict[str, Any]:
         "mcpServers": {
             "schift": {
                 "command": "npx",
-                "args": ["-y", "@schift-io/mcp"],
+                "args": ["--yes", "--package=@schift-io/mcp", "schift-mcp"],
             }
         }
     }
@@ -399,20 +399,11 @@ def _merge_marked_toml(text: str, block: str) -> str:
 
 
 def _codex_block() -> str:
-    return """# BEGIN SCHIFT APM BRIDGE
-[mcp_servers.schift]
-command = "npx"
-args = ["-y", "@schift-io/mcp"]
-startup_timeout_sec = 30
-# SCHIFT_API_KEY is inherited from the Codex process; it is never written here.
-# END SCHIFT APM BRIDGE"""
+    return MCP_RUNTIME.codex_block()
 
 
 def _claude_mcp_config() -> dict[str, Any]:
-    return {
-        "command": "npx",
-        "args": ["-y", "@schift-io/mcp"],
-    }
+    return MCP_RUNTIME.mcp_config()
 
 
 def _claude_hooks() -> dict[str, Any]:
@@ -635,87 +626,170 @@ def _remove_managed_hook(config: dict[str, Any], event: str, command: str) -> bo
     return changed
 
 
-def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: bool, env_file: Path | None = None) -> list[Path]:
+@dataclass(frozen=True)
+class McpRuntimeSpec:
+    server_name: str
+    command: str
+    args: tuple[str, ...]
+    legacy_args: tuple[tuple[str, ...], ...]
+    startup_timeout_sec: int = 30
+
+    def mcp_config(self) -> dict[str, Any]:
+        return {"command": self.command, "args": list(self.args)}
+
+    def known_mcp_configs(self) -> set[str]:
+        configs = [self.mcp_config()]
+        configs.extend(
+            {"command": self.command, "args": list(args)} for args in self.legacy_args
+        )
+        return {json.dumps(config, sort_keys=True) for config in configs}
+
+    def codex_block(self) -> str:
+        args = ", ".join(json.dumps(arg) for arg in self.args)
+        return (
+            f"{_MARKER_START}\n[mcp_servers.{self.server_name}]\n"
+            f"command = {json.dumps(self.command)}\nargs = [{args}]\n"
+            f"startup_timeout_sec = {self.startup_timeout_sec}\n"
+            "# Credentials remain in ~/.schift/ai-memory/config.json.\n"
+            f"{_MARKER_END}"
+        )
+
+
+MCP_RUNTIME = McpRuntimeSpec(
+    server_name="schift",
+    command="npx",
+    args=("--yes", "--package=@schift-io/mcp", "schift-mcp"),
+    legacy_args=(("-y", "@schift-io/mcp"), ("-y", "@schift-io/ai-memory-mcp")),
+)
+
+
+class HostRuntimeAdapter:
+    name: str
+
+    def install(self, *, root: Path, runtime: McpRuntimeSpec, hooks: bool, dry_run: bool) -> list[Path]:
+        raise NotImplementedError
+
+    def uninstall(self, *, root: Path, runtime: McpRuntimeSpec, purge_local_data: bool) -> list[Path]:
+        raise NotImplementedError
+
+    def skill_path(self, root: Path, agent_id: str) -> Path:
+        raise NotImplementedError
+
+
+class CodexRuntimeAdapter(HostRuntimeAdapter):
+    name = "codex"
+
+    def install(self, *, root: Path, runtime: McpRuntimeSpec, hooks: bool, dry_run: bool) -> list[Path]:
+        path = root / ".codex" / "config.toml"
+        content = path.read_text(encoding="utf-8") if path.exists() else ""
+        pattern = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
+        if not pattern.search(content) and re.search(rf"^\[mcp_servers\.{re.escape(runtime.server_name)}\]", content, re.MULTILINE):
+            raise ValueError("Codex already has a non-managed schift MCP entry")
+        next_content = pattern.sub(runtime.codex_block(), content) if pattern.search(content) else (content.rstrip() + ("\n\n" if content.strip() else "") + runtime.codex_block() + "\n")
+        targets = [path]
+        if not dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(next_content, encoding="utf-8")
+        if hooks:
+            hook_path = root / ".codex" / "hooks.json"
+            config = _json_object(hook_path)
+            if any(_merge_managed_hook(config, event, command) for event, command in _extension_commands(self.name)) and not dry_run:
+                _write_json(hook_path, config)
+            targets.append(hook_path)
+        return targets
+
+    def uninstall(self, *, root: Path, runtime: McpRuntimeSpec, purge_local_data: bool) -> list[Path]:
+        path = root / ".codex" / "config.toml"
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            next_content = re.sub(r"(?:^|\n)" + re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END) + r"\n?", "", content, flags=re.DOTALL).strip() + "\n"
+            if next_content != content:
+                path.write_text(next_content, encoding="utf-8")
+        hook_path = root / ".codex" / "hooks.json"
+        config = _json_object(hook_path)
+        if any(_remove_managed_hook(config, event, command) for event, command in _extension_commands(self.name)):
+            _write_json(hook_path, config)
+        return [path, hook_path]
+
+    def skill_path(self, root: Path, agent_id: str) -> Path:
+        return root / ".codex" / "skills" / f"schift-{agent_id}" / "SKILL.md"
+
+
+class ClaudeRuntimeAdapter(HostRuntimeAdapter):
+    name = "claude"
+
+    def install(self, *, root: Path, runtime: McpRuntimeSpec, hooks: bool, dry_run: bool) -> list[Path]:
+        path = root / ".claude.json"
+        config = _json_object(path)
+        servers = config.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise ValueError("Claude mcpServers must be a JSON object")
+        if runtime.server_name in servers and json.dumps(servers[runtime.server_name], sort_keys=True) not in runtime.known_mcp_configs():
+            raise ValueError("Claude already has a non-managed schift MCP entry")
+        servers[runtime.server_name] = runtime.mcp_config()
+        targets = [path]
+        if not dry_run:
+            _write_json(path, config)
+        if hooks:
+            hook_path = root / ".claude" / "settings.json"
+            hook_config = _json_object(hook_path)
+            if any(_merge_managed_hook(hook_config, event, command) for event, command in _extension_commands(self.name)) and not dry_run:
+                _write_json(hook_path, hook_config)
+            targets.append(hook_path)
+        return targets
+
+    def uninstall(self, *, root: Path, runtime: McpRuntimeSpec, purge_local_data: bool) -> list[Path]:
+        path = root / ".claude.json"
+        config = _json_object(path)
+        servers = config.get("mcpServers")
+        if isinstance(servers, dict) and runtime.server_name in servers and json.dumps(servers[runtime.server_name], sort_keys=True) in runtime.known_mcp_configs():
+            del servers[runtime.server_name]
+            if not servers:
+                del config["mcpServers"]
+            _write_json(path, config)
+        hook_path = root / ".claude" / "settings.json"
+        hook_config = _json_object(hook_path)
+        if any(_remove_managed_hook(hook_config, event, command) for event, command in _extension_commands(self.name)):
+            _write_json(hook_path, hook_config)
+        return [path, hook_path]
+
+    def skill_path(self, root: Path, agent_id: str) -> Path:
+        return root / ".claude" / "skills" / f"schift-{agent_id}" / "SKILL.md"
+
+
+HOST_ADAPTERS: dict[str, HostRuntimeAdapter] = {
+    adapter.name: adapter for adapter in (CodexRuntimeAdapter(), ClaudeRuntimeAdapter())
+}
+
+
+def _selected_adapters(hosts: list[str], adapters: dict[str, HostRuntimeAdapter] | None = None) -> list[HostRuntimeAdapter]:
+    registry = adapters or HOST_ADAPTERS
+    unknown = sorted(set(hosts) - set(registry))
+    if unknown:
+        raise ValueError(f"unknown host(s): {', '.join(unknown)}")
+    return [registry[host] for host in hosts]
+
+
+def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: bool, env_file: Path | None = None, adapters: dict[str, HostRuntimeAdapter] | None = None, runtime: McpRuntimeSpec = MCP_RUNTIME) -> list[Path]:
     targets: list[Path] = []
     if env_file is not None:
         targets.append(_provision_env_config(root, env_file, dry_run))
-    for host in hosts:
-        if host == "codex":
-            path = root / ".codex" / "config.toml"
-            content = path.read_text(encoding="utf-8") if path.exists() else ""
-            block = f"{_MARKER_START}\n[mcp_servers.schift]\ncommand = \"npx\"\nargs = [\"-y\", \"@schift-io/mcp\"]\nstartup_timeout_sec = 30\n# Credentials remain in ~/.schift/ai-memory/config.json.\n{_MARKER_END}"
-            pattern = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
-            if not pattern.search(content) and re.search(r"^\[mcp_servers\.schift\]", content, re.MULTILINE):
-                raise ValueError("Codex already has a non-managed schift MCP entry")
-            next_content = pattern.sub(block, content) if pattern.search(content) else (content.rstrip() + ("\n\n" if content.strip() else "") + block + "\n")
-            if not dry_run:
-                path.parent.mkdir(parents=True, exist_ok=True); path.write_text(next_content, encoding="utf-8")
-            targets.append(path)
-            if hooks:
-                hook_path = root / ".codex" / "hooks.json"; config = _json_object(hook_path)
-                if any(_merge_managed_hook(config, event, command) for event, command in _extension_commands(host)) and not dry_run:
-                    _write_json(hook_path, config)
-                targets.append(hook_path)
-        elif host == "claude":
-            path = root / ".claude.json"; config = _json_object(path); servers = config.setdefault("mcpServers", {})
-            expected = {"command": "npx", "args": ["-y", "@schift-io/mcp"]}
-            legacy = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
-            if not isinstance(servers, dict): raise ValueError("Claude mcpServers must be a JSON object")
-            known = {
-                json.dumps(expected, sort_keys=True),
-                json.dumps(legacy, sort_keys=True),
-            }
-            if "schift" in servers and json.dumps(servers["schift"], sort_keys=True) not in known:
-                raise ValueError("Claude already has a non-managed schift MCP entry")
-            servers["schift"] = expected
-            if not dry_run: _write_json(path, config)
-            targets.append(path)
-            if hooks:
-                hook_path = root / ".claude" / "settings.json"; hook_config = _json_object(hook_path)
-                if any(_merge_managed_hook(hook_config, event, command) for event, command in _extension_commands(host)) and not dry_run:
-                    _write_json(hook_path, hook_config)
-                targets.append(hook_path)
-        else:
-            raise ValueError(f"unknown host: {host}")
+    for adapter in _selected_adapters(hosts, adapters):
+        targets.extend(adapter.install(root=root, runtime=runtime, hooks=hooks, dry_run=dry_run))
     return targets
 
 
-def uninstall_extension(*, hosts: list[str], root: Path, purge_local_data: bool) -> list[Path]:
+def uninstall_extension(*, hosts: list[str], root: Path, purge_local_data: bool, adapters: dict[str, HostRuntimeAdapter] | None = None, runtime: McpRuntimeSpec = MCP_RUNTIME) -> list[Path]:
     targets: list[Path] = []
-    for host in hosts:
-        if host == "codex":
-            path = root / ".codex" / "config.toml"
-            if path.exists():
-                content = path.read_text(encoding="utf-8")
-                next_content = re.sub(r"(?:^|\n)" + re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END) + r"\n?", "", content, flags=re.DOTALL).strip() + "\n"
-                if next_content != content: path.write_text(next_content, encoding="utf-8")
-            targets.append(path)
-            hook_path = root / ".codex" / "hooks.json"; config = _json_object(hook_path)
-            if any(_remove_managed_hook(config, event, command) for event, command in _extension_commands(host)): _write_json(hook_path, config)
-            targets.append(hook_path)
-        elif host == "claude":
-            path = root / ".claude.json"; config = _json_object(path); expected = {"command": "npx", "args": ["-y", "@schift-io/mcp"]}; legacy = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
-            if isinstance(config.get("mcpServers"), dict) and config["mcpServers"].get("schift") in (expected, legacy):
-                del config["mcpServers"]["schift"]
-                if not config["mcpServers"]: del config["mcpServers"]
-                _write_json(path, config)
-            targets.append(path)
-            hook_path = root / ".claude" / "settings.json"; hook_config = _json_object(hook_path)
-            if any(_remove_managed_hook(hook_config, event, command) for event, command in _extension_commands(host)): _write_json(hook_path, hook_config)
-            targets.append(hook_path)
-        else:
-            raise ValueError(f"unknown host: {host}")
+    for adapter in _selected_adapters(hosts, adapters):
+        targets.extend(adapter.uninstall(root=root, runtime=runtime, purge_local_data=purge_local_data))
     if purge_local_data:
         data = root / ".schift" / "ai-memory"; shutil.rmtree(data, ignore_errors=True); targets.append(data)
     return targets
 
 
 def _host_skill_path(root: Path, host: str, agent_id: str) -> Path:
-    if host == "claude":
-        return root / ".claude" / "skills" / f"schift-{agent_id}" / "SKILL.md"
-    if host == "codex":
-        return root / ".codex" / "skills" / f"schift-{agent_id}" / "SKILL.md"
-    raise ValueError(f"unknown host: {host}")
+    return _selected_adapters([host])[0].skill_path(root, agent_id)
 
 
 def _deployed_skill(manifest: dict[str, Any], source: Path) -> str:

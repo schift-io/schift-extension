@@ -17,7 +17,7 @@ registry. It creates and validates a local artifact first.
 After this package is published to npm:
 
 ```bash
-npx -y @schift-io/extension@latest install --host both --env-file .env.local
+npx --yes --package=@schift-io/extension@latest extension install --host both --env-file .env.local
 ```
 
 During repository development:
@@ -37,7 +37,7 @@ node bin/schift-extension.mjs studio
 `--env-file` reads `SCHIFT_API_URL` and `SCHIFT_API_KEY`, then writes them only
 to `~/.schift/ai-memory/config.json`; the installer never writes API keys into
 Codex or Claude configuration files. Remove the extension with
-`npx -y @schift-io/extension@latest uninstall`. Add `--purge-local-data` only when
+`npx --yes --package=@schift-io/extension@latest extension uninstall`. Add `--purge-local-data` only when
 you also want to delete local credentials and queued summaries.
 
 ## Authoring Surface
@@ -88,15 +88,15 @@ configuration.
 
 ```bash
 # Run on the server, after Claude/Codex and Node are installed.
-npx -y @schift-io/extension@latest deploy ./customer-brief.agent \
+npx --yes --package=@schift-io/extension@latest extension deploy ./customer-brief.agent \
   --host both --env-file .env.local
 
 # Claude uses the deployed instruction and pack-specific MCP config.
 ~/.local/bin/schift-claude-customer-brief
 
 # Check or remove one pack. This does not remove shared MCP credentials.
-npx -y @schift-io/extension@latest verify-deploy customer-brief
-npx -y @schift-io/extension@latest undeploy customer-brief
+npx --yes --package=@schift-io/extension@latest extension verify-deploy customer-brief
+npx --yes --package=@schift-io/extension@latest extension undeploy customer-brief
 ```
 
 From a workstation, send the pack over SSH and invoke the same server-side
@@ -104,7 +104,7 @@ deploy lifecycle. The server must already have its private Schift MCP config,
 or use `--copy-env` to send only the required Schift variables over SSH stdin.
 
 ```bash
-npx -y @schift-io/extension@latest ship ./customer-brief.agent \
+npx --yes --package=@schift-io/extension@latest extension ship ./customer-brief.agent \
   --target deploy@server.example --host both
 ```
 
@@ -122,7 +122,7 @@ and Claude. Provision it from the current repository environment before using
 Studio:
 
 ```bash
-npx -y @schift-io/extension@latest install --host both --env-file .env.local
+npx --yes --package=@schift-io/extension@latest extension install --host both --env-file .env.local
 ```
 
 The configured key must have `buckets:manage`, which is required by Schift's
