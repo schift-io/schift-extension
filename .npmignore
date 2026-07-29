@@ -1,0 +1,5 @@
+**/__pycache__/
+**/*.pyc
+.venv*/
+src/**/__pycache__/
+src/**/*.pyc

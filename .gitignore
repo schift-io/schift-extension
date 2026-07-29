@@ -1,0 +1,3 @@
+.venv-apm-bridge/
+__pycache__/
+*.pyc

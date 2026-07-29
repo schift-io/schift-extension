@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Codex와 Claude 작업을 Schift APM으로 구조화하고 검증하는 로컬 작성기"
+    />
+    <title>Schift APM Bridge Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <p class="kicker">SCHIFT / LOCAL AUTHORING</p>
+        <div>
+          <h1>작동 방식을 APM으로<br />보이게 만드세요.</h1>
+          <p class="lede">
+            Claude나 Codex에서 쓰던 역할을 가져와, 모델·스킬·MCP 접근 범위를
+            한 번에 검토합니다.
+          </p>
+        </div>
+      </header>
+
+      <section class="workbench" aria-labelledby="authoring-title">
+        <div class="form-panel">
+          <div class="section-heading">
+            <p class="kicker">01 / DEFINE</p>
+            <h2 id="authoring-title">이번 APM이 할 일</h2>
+          </div>
+          <form id="pack-form">
+            <label>
+              <span>팩 이름</span>
+              <input name="name" value="my-workflow" required pattern="[a-z0-9-]+" />
+            </label>
+            <label>
+              <span>목적</span>
+              <textarea name="purpose" required>회사 근거를 검색해 검토 가능한 초안을 만든다.</textarea>
+            </label>
+            <label>
+              <span>기본 모델</span>
+              <select name="model">
+                <option value="openai/gpt-5.4-mini">Codex / GPT-5.4 mini</option>
+                <option value="anthropic/claude-sonnet">Claude Sonnet</option>
+                <option value="google/gemini-3-flash">Gemini Flash</option>
+              </select>
+            </label>
+            <label>
+              <span>가져올 Skill 또는 Agent 경로</span>
+              <input name="source" placeholder="비워 두면 새 구조를 만듭니다" />
+              <small>SKILL.md, AGENTS.md, agent.md가 있는 파일 또는 폴더</small>
+            </label>
+            <fieldset>
+              <legend>Schift 연결</legend>
+              <label class="choice">
+                <input type="checkbox" name="connector" value="schift-memory" checked />
+                <span><strong>Schift Memory</strong> 회사 근거 검색과 인용</span>
+              </label>
+              <label class="choice">
+                <input type="checkbox" name="connector" value="schift-write" />
+                <span><strong>Schift write-back</strong> 승인 뒤에만 사실과 문서 저장</span>
+              </label>
+              <label class="choice">
+                <input type="checkbox" name="connector" value="local-model" checked />
+                <span><strong>내 구독 모델</strong> 실행 비용은 Claude/Codex가 담당</span>
+              </label>
+            </fieldset>
+            <button type="submit">APM 만들기</button>
+          </form>
+        </div>
+
+        <aside class="graph-panel" aria-labelledby="graph-title">
+          <div class="section-heading">
+            <p class="kicker">02 / REVIEW</p>
+            <h2 id="graph-title">실행 구조</h2>
+          </div>
+          <div class="graph" aria-live="polite">
+            <div class="node node-source">Claude / Codex<br /><small>기존 Skill·Agent</small></div>
+            <span class="link link-a"></span>
+            <div class="node node-pack">APM<br /><small id="graph-purpose">검토 가능한 업무</small></div>
+            <span class="link link-b"></span>
+            <div class="node node-model"><span id="graph-model">GPT-5.4 mini</span><br /><small>내 구독 모델</small></div>
+            <span class="link link-c"></span>
+            <div class="node node-memory"><span id="graph-memory">Schift Memory</span><br /><small id="graph-tools">search · recall</small></div>
+          </div>
+          <div class="boundary">
+            <span>실행 경계</span>
+            <p>Schift는 데이터·근거·저장만 담당합니다. 모델 실행과 토큰 비용은 내 Claude/Codex 구독에 남습니다.</p>
+          </div>
+        </aside>
+      </section>
+
+      <section id="result" class="result is-empty" aria-live="polite">
+        <p class="kicker">03 / VERIFY</p>
+        <h2>아직 만든 APM이 없습니다.</h2>
+        <p>생성하면 로컬 호스트 경계와 패키지 무결성을 함께 확인합니다.</p>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
