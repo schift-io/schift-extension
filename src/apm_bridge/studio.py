@@ -36,15 +36,15 @@ def resolve_generated_manifest(*, destination: Path, value: str) -> Path:
     manifest = candidate / "pack.json" if candidate.is_dir() else candidate
     output = destination.resolve()
     if manifest.name != "pack.json" or output not in manifest.parents:
-        raise ValueError("MCP upload accepts only a generated pack.json inside this Studio output folder")
+        raise ValueError("APM publication accepts only a generated pack.json inside this Studio output folder")
     if not manifest.is_file():
         raise ValueError("generated pack.json no longer exists")
     return manifest
 
 
-def upload_manifest_via_mcp(*, manifest: Path) -> dict:
+def publish_pack_via_mcp(*, pack: Path) -> dict:
     result = subprocess.run(
-        ["node", str(MCP_UPLOADER), str(manifest)],
+        ["node", str(MCP_UPLOADER), str(pack)],
         check=False,
         capture_output=True,
         text=True,
@@ -53,12 +53,12 @@ def upload_manifest_via_mcp(*, manifest: Path) -> dict:
     try:
         response = json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        detail = result.stderr.strip() or "MCP upload returned an invalid response"
+        detail = result.stderr.strip() or "MCP APM publication returned an invalid response"
         raise ValueError(detail) from error
     if not response.get("ok"):
-        raise ValueError(str(response.get("error") or "MCP upload failed"))
+        raise ValueError(str(response.get("error") or "MCP APM publication failed"))
     if result.returncode != 0:
-        raise ValueError("MCP upload failed")
+        raise ValueError("MCP APM publication failed")
     return response
 
 
@@ -103,8 +103,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 manifest = resolve_generated_manifest(
                     destination=self.output, value=str(payload["pack"])
                 )
-                upload = upload_manifest_via_mcp(manifest=manifest)
-                self._json(HTTPStatus.OK, {"ok": True, "upload": upload})
+                publication = publish_pack_via_mcp(pack=manifest.parent)
+                self._json(HTTPStatus.OK, {"ok": True, "publication": publication})
                 return
             if route == "/api/deploy":
                 pack = resolve_generated_manifest(

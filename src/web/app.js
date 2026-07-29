@@ -57,10 +57,10 @@ function renderResult(payload, isError = false) {
   result.classList.toggle("is-success", !isError);
   const messages = payload.messages || [payload.error];
   const upload = payload.pack && !isError
-    ? `<button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Upload manifest to Schift MCP</button><span id="upload-state">Keeps the sealed .apm local. Queues pack.json for Schift search.</span>`
+    ? `<button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Publish private APM</button><span id="upload-state">Registers this sealed pack to your current Schift account. It stays non-live.</span>`
     : "";
   const deploy = payload.pack && !isError
-    ? `<button id="deploy-runtime" type="button" data-pack="${escapeHTML(payload.pack)}">Install in this server runtime</button><span id="deploy-state">Installs Claude and Codex skills, MCP wiring, hooks, and the Claude launcher.</span>`
+    ? `<button id="deploy-runtime" type="button" data-pack="${escapeHTML(payload.pack)}">Install in Codex + Claude</button><span id="deploy-state">Adds local skills, Schift MCP, hooks, and the Claude launcher to this computer.</span>`
     : "";
   const detail = isError
     ? `<span>${escapeHTML(messages[0] || "Build failed")}</span>`
@@ -70,7 +70,7 @@ function renderResult(payload, isError = false) {
     const button = event.currentTarget;
     const state = result.querySelector("#deploy-state");
     button.disabled = true;
-    button.textContent = "Installing runtime";
+      button.textContent = "Installing locally";
     try {
       const response = await fetch("/api/deploy", {
         method: "POST",
@@ -78,20 +78,20 @@ function renderResult(payload, isError = false) {
         body: JSON.stringify({ pack: button.dataset.pack }),
       });
       const body = await response.json();
-      if (!response.ok || !body.ok) throw new Error(body.error || "runtime deployment failed");
+      if (!response.ok || !body.ok) throw new Error(body.error || "local install failed");
       state.textContent = `Installed ${body.agent_id}. Run ${body.launcher} to start this Claude agent.`;
       button.textContent = "Runtime installed";
     } catch (error) {
-      state.textContent = `Runtime install failed: ${error.message}`;
+      state.textContent = `Local install failed: ${error.message}`;
       button.disabled = false;
-      button.textContent = "Retry runtime install";
+      button.textContent = "Retry local install";
     }
   });
   result.querySelector("#upload-mcp")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const state = result.querySelector("#upload-state");
     button.disabled = true;
-    button.textContent = "Queueing through MCP";
+    button.textContent = "Publishing through MCP";
     state.textContent = "Starting the local Schift MCP client...";
     try {
       const response = await fetch("/api/upload-mcp", {
@@ -100,13 +100,14 @@ function renderResult(payload, isError = false) {
         body: JSON.stringify({ pack: button.dataset.pack }),
       });
       const body = await response.json();
-      if (!response.ok || !body.ok) throw new Error(body.error || "MCP upload failed");
-      state.textContent = `${body.upload.file_name} queued as ${body.upload.job_id || "an MCP job"}.`;
-      button.textContent = "Manifest queued";
+      if (!response.ok || !body.ok) throw new Error(body.error || "MCP APM publication failed");
+      const published = [body.publication.agent_id, body.publication.version].filter(Boolean).join("@");
+      state.textContent = `Private APM published: ${published || "current pack"}. It is not live.`;
+      button.textContent = "Private APM published";
     } catch (error) {
-      state.textContent = `MCP upload failed: ${error.message}`;
+      state.textContent = `MCP APM publication failed: ${error.message}`;
       button.disabled = false;
-      button.textContent = "Retry MCP upload";
+      button.textContent = "Retry private APM publication";
     }
   });
 }

@@ -146,14 +146,13 @@ document-ingest `SCHIFT_API_KEY`; the extension stores both only in its private
 APMs; the command exits with a specific authorization error instead of claiming
 a release succeeded.
 
-## Studio MCP Upload
+## Studio Private APM Publication
 
-After a local build, Studio exposes an explicit **Upload manifest to Schift
-MCP** action. It queues the generated `pack.json` through
-`schift_upload_document` so the APM definition is searchable in Schift. This
-is not an APM release. The sealed `.apm` is published only through the
-explicit `publish` command, or through the MCP `schift_apm_publish` tool with
-the same publisher credential.
+After a local build, Studio exposes an explicit **Publish private APM** action.
+It invokes `schift_apm_publish_local` through the locally configured Schift
+MCP and uploads the sealed pack to the authenticated account's private APM
+registry. The action always sets `make_live: false`; publishing a version and
+making it live remain separate operational decisions.
 
 The action uses the same private local MCP configuration installed for Codex
 and Claude. Provision it from the current repository environment before using
@@ -163,8 +162,9 @@ Studio:
 npx --yes --package=@schift-io/extension@latest extension install --host both --env-file .env.local
 ```
 
-The configured key must have `buckets:manage` for document upload. APM
-registry publication additionally requires `agents:manage` or organization-admin access.
+The configured key must have `agents:manage` or organization-admin access for
+APM registry publication. Studio does not ingest the manifest as a searchable
+document.
 
 ## Verification
 

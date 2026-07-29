@@ -1,21 +1,20 @@
-import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { stat } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const packPath = process.argv[2];
 if (!packPath) {
-  throw new Error("usage: node mcp-upload.mjs <pack.json>");
+  throw new Error("usage: node mcp-upload.mjs <pack.agent>");
 }
 
 const resolvedPack = resolve(packPath);
-if (basename(resolvedPack) !== "pack.json") {
-  throw new Error("MCP upload accepts a generated pack.json manifest only.");
+if (!resolvedPack.endsWith(".agent") || basename(resolvedPack) === ".agent") {
+  throw new Error("MCP upload accepts a generated .agent directory only.");
 }
-
-const content = await readFile(resolvedPack, "utf8");
-const manifest = JSON.parse(content);
-const agentId = typeof manifest.agent_id === "string" ? manifest.agent_id : "apm-pack";
+if (!(await stat(resolvedPack)).isDirectory() || !(await stat(join(resolvedPack, "pack.json"))).isFile()) {
+  throw new Error("MCP upload requires a generated .agent directory with pack.json.");
+}
 const client = new Client({ name: "schift-extension-studio", version: "1.0.0" });
 
 try {
@@ -31,26 +30,27 @@ try {
     }),
   );
   const result = await client.callTool({
-    name: "schift_upload_document",
+    name: "schift_apm_publish_local",
     arguments: {
-      filename: `${agentId}.apm.json`,
-      text: content,
-      content_type: "application/json",
-      metadata: {
-        source: "schift-extension-studio",
-        artifact_kind: "apm_manifest",
-        apm_agent_id: agentId,
-      },
+      pack_path: resolvedPack,
+      make_live: false,
     },
   });
   const text = result.content.find((item) => item.type === "text")?.text ?? "{}";
+  if (result.isError) throw new Error(text);
   const response = JSON.parse(text);
-  const job = Array.isArray(response.jobs) ? response.jobs[0] : undefined;
+  const published = typeof response.published === "string" ? response.published : "";
+  const separator = published.lastIndexOf("@");
   process.stdout.write(`${JSON.stringify({
     ok: true,
-    job_id: typeof job?.job_id === "string" ? job.job_id : null,
-    file_name: typeof job?.file_name === "string" ? job.file_name : `${agentId}.apm.json`,
-    status: typeof job?.status === "string" ? job.status : "queued",
+    agent_id: typeof response.agent_id === "string"
+      ? response.agent_id
+      : separator > 0 ? published.slice(0, separator) : null,
+    version: typeof response.version === "string"
+      ? response.version
+      : separator > 0 ? published.slice(separator + 1) : null,
+    visibility: typeof response.visibility === "string" ? response.visibility : "private",
+    is_live: response.is_live === true || response.live === true,
   })}\n`);
 } catch (error) {
   process.stdout.write(`${JSON.stringify({

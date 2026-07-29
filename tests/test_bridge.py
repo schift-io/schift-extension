@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from argparse import Namespace
@@ -23,7 +24,7 @@ from apm_bridge.core import (
     verify_deployment,
 )
 from apm_bridge.cli import cmd_studio
-from apm_bridge.studio import resolve_generated_manifest, stage_dropped_source
+from apm_bridge.studio import publish_pack_via_mcp, resolve_generated_manifest, stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
@@ -150,7 +151,7 @@ class ApmBridgeTests(unittest.TestCase):
             self.assertFalse((server / ".schift-extension" / "packs" / "evidence-brief").exists())
             self.assertFalse(launcher.exists())
 
-    def test_mcp_upload_only_accepts_generated_pack_manifest(self) -> None:
+    def test_mcp_publication_only_accepts_generated_pack_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "workspace"
             pack = output / "sample.agent"
@@ -165,6 +166,23 @@ class ApmBridgeTests(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 resolve_generated_manifest(destination=output, value=str(pack / "agent.md"))
+
+    def test_mcp_publication_passes_generated_agent_directory_to_uploader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pack = Path(tmp) / "workspace" / "sample.agent"
+            pack.mkdir(parents=True)
+            (pack / "pack.json").write_text("{}\n", encoding="utf-8")
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout='{"ok": true, "agent_id": "sample", "version": "0.1.0", "is_live": false}\n',
+                stderr="",
+            )
+            with patch("apm_bridge.studio.subprocess.run", return_value=completed) as run:
+                publication = publish_pack_via_mcp(pack=pack)
+            self.assertEqual(publication["agent_id"], "sample")
+            self.assertFalse(publication["is_live"])
+            self.assertEqual(run.call_args.args[0][-1], str(pack))
 
     def test_dropped_markdown_source_is_staged_for_pack_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
