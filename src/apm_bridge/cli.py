@@ -15,6 +15,7 @@ from apm_bridge.core import (  # noqa: E402
     create_pack,
     deploy_pack,
     install_extension,
+    publish_pack,
     ship_pack,
     undeploy_pack,
     uninstall_extension,
@@ -95,6 +96,25 @@ def cmd_build(args: argparse.Namespace) -> int:
             print(f"ERROR: {message}")
         return 1
     print(result.artifact)
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    result = publish_pack(
+        pack=Path(args.pack).expanduser(),
+        root=Path(args.root).expanduser(),
+        env_file=Path(args.env_file).expanduser() if args.env_file else None,
+        make_live=args.make_live,
+        visibility=args.visibility,
+        allowed_orgs=args.allowed_org,
+        allow_rehash=args.allow_rehash,
+    )
+    print(f"published: {result.agent_id}@{result.version}")
+    print(f"owner_org: {result.owner_org}")
+    print(f"uploaded_by: {result.uploaded_by}")
+    print(f"live: {str(result.is_live).lower()}")
+    print(f"content_hash: {result.content_hash}")
+    print(f"artifact: {result.artifact}")
     return 0
 
 
@@ -218,6 +238,16 @@ def build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="build a deterministic local .apm artifact")
     build.add_argument("pack")
     build.set_defaults(func=cmd_build)
+
+    publish = sub.add_parser("publish", help="upload a sealed pack to the authenticated owner's APM registry")
+    publish.add_argument("pack")
+    publish.add_argument("--root", default="~", help="home containing private ~/.schift/ai-memory/config.json")
+    publish.add_argument("--env-file", help="use SCHIFT_API_URL and SCHIFT_API_KEY from this private env file")
+    publish.add_argument("--make-live", action="store_true", help="promote this uploaded version immediately")
+    publish.add_argument("--visibility", choices=["private", "corporate", "public"], default="private")
+    publish.add_argument("--allowed-org", action="append", default=[], help="organization ID allowed for corporate visibility; repeatable")
+    publish.add_argument("--allow-rehash", action="store_true", help="allow replacing an existing agent_id@version with a new hash")
+    publish.set_defaults(func=cmd_publish)
 
     deploy = sub.add_parser("deploy", help="install a validated pack into this Claude/Codex server runtime")
     deploy.add_argument("pack")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
-import re
+import base64
 import gzip
 import io
+import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 DEFAULT_ENDPOINT = "https://mcp.schift.io/mcp"
 
@@ -50,6 +53,17 @@ class DeploymentResult:
     release: Path
     artifact: Path
     targets: list[Path]
+
+
+@dataclass(frozen=True)
+class PublicationResult:
+    agent_id: str
+    version: str
+    content_hash: str
+    owner_org: str
+    uploaded_by: str
+    is_live: bool
+    artifact: Path
 
 
 def _quote_yaml(value: str) -> str:
@@ -233,7 +247,7 @@ def create_pack(
                 "source": "imported" if source else "scaffolded",
             }
         ],
-        "mcp_servers": [runtime["mcp"]],
+        "mcp_servers": [{**runtime["mcp"], "name": "schift-rag"}],
         "connectors": runtime["connectors"],
         "runtime_boundary": {
             "host_services_only": _required_capabilities(connectors)
@@ -597,6 +611,151 @@ def _provision_env_config(root: Path, env_file: Path, dry_run: bool) -> Path:
     if not dry_run:
         _write_json(config_path, config)
     return config_path
+
+
+def _publisher_credentials(*, root: Path, env_file: Path | None) -> tuple[str, str]:
+    if env_file is not None:
+        values = _env_values(env_file)
+        api_base_url = values.get("SCHIFT_API_BASE_URL") or values.get("SCHIFT_API_URL")
+        api_key = values.get("SCHIFT_API_KEY")
+    else:
+        config_path = root / ".schift" / "ai-memory" / "config.json"
+        config = _json_object(config_path)
+        api_base_url = str(config.get("api_base_url") or "")
+        api_key = str(config.get("api_key") or "")
+    if not api_base_url or not api_key:
+        source = str(env_file) if env_file is not None else str(root / ".schift" / "ai-memory" / "config.json")
+        raise ValueError(
+            "APM publish needs SCHIFT_API_URL and SCHIFT_API_KEY. "
+            f"No usable private credential was found in {source}."
+        )
+    return api_base_url.rstrip("/"), api_key
+
+
+def _api_error_detail(payload: bytes) -> str:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return payload.decode("utf-8", errors="replace").strip()
+    if isinstance(value, dict):
+        detail = value.get("detail") or value.get("error") or value
+        if isinstance(detail, dict):
+            return json.dumps(detail, ensure_ascii=False, sort_keys=True)
+        return str(detail)
+    return str(value)
+
+
+def _api_json_request(*, method: str, url: str, api_key: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    request = Request(
+        url,
+        data=payload,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "schift-extension/apm-publisher",
+        },
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        detail = _api_error_detail(error.read())
+        if error.code == 401:
+            raise ValueError(
+                "APM registry authentication failed (401). Configure a Schift user/org credential, "
+                "not only a document-ingest key."
+            ) from error
+        if error.code == 403:
+            raise ValueError(
+                "APM registry publish was denied (403). The credential needs agents:manage "
+                "or an organization-admin session with an active org context."
+            ) from error
+        raise ValueError(f"APM registry request failed ({error.code}): {detail}") from error
+    except URLError as error:
+        raise ValueError(f"could not reach the APM registry: {error.reason}") from error
+    if not isinstance(value, dict):
+        raise ValueError("APM registry returned an invalid JSON object")
+    return value
+
+
+def publish_pack(
+    *,
+    pack: Path,
+    root: Path,
+    env_file: Path | None = None,
+    make_live: bool = False,
+    visibility: str = "private",
+    allowed_orgs: list[str] | None = None,
+    allow_rehash: bool = False,
+) -> PublicationResult:
+    validation = validate_pack(pack)
+    if not validation.ok or validation.artifact is None:
+        raise ValueError("cannot publish an invalid pack: " + "; ".join(validation.messages))
+
+    artifact = validation.artifact
+    manifest = json.loads((pack.resolve() / "pack.json").read_text(encoding="utf-8"))
+    build = json.loads((artifact.parent / "build.json").read_text(encoding="utf-8"))
+    expected_hash = str(build.get("content_hash") or "")
+    if not expected_hash:
+        raise ValueError("local build metadata is missing content_hash")
+
+    api_base_url, api_key = _publisher_credentials(root=root.expanduser(), env_file=env_file)
+    body: dict[str, Any] = {
+        "apm_b64": base64.b64encode(artifact.read_bytes()).decode("ascii"),
+        "expected_hash": expected_hash,
+        "make_live": make_live,
+        "visibility": visibility,
+        "allow_rehash": allow_rehash,
+    }
+    if allowed_orgs:
+        body["allowed_orgs"] = allowed_orgs
+    response = _api_json_request(
+        method="POST",
+        url=f"{api_base_url}/v1/apm/registry/packs/upload",
+        api_key=api_key,
+        body=body,
+    )
+    ref = response.get("ref")
+    if not isinstance(ref, dict):
+        raise ValueError("APM registry upload did not return an ownership reference")
+
+    agent_id = str(ref.get("agent_id") or "")
+    version = str(ref.get("version") or "")
+    content_hash = str(ref.get("content_hash") or "")
+    owner_org = str(ref.get("owner_org") or "")
+    uploaded_by = str(ref.get("uploaded_by") or "")
+    if agent_id != str(manifest.get("agent_id") or "") or not version or content_hash != expected_hash:
+        raise ValueError("APM registry returned a ref that does not match the sealed local artifact")
+    if not owner_org or not uploaded_by:
+        raise ValueError("APM registry did not bind the uploaded pack to an owner organization and user")
+
+    listing = _api_json_request(
+        method="GET",
+        url=f"{api_base_url}/v1/apm/registry/packs",
+        api_key=api_key,
+    )
+    packs = listing.get("packs")
+    if not isinstance(packs, list) or not any(
+        isinstance(item, dict)
+        and item.get("agent_id") == agent_id
+        and item.get("owner_org") == owner_org
+        and item.get("uploaded_by") == uploaded_by
+        for item in packs
+    ):
+        raise ValueError("APM registry accepted the upload but it is not visible in this credential's owned-pack list")
+
+    return PublicationResult(
+        agent_id=agent_id,
+        version=version,
+        content_hash=content_hash,
+        owner_org=owner_org,
+        uploaded_by=uploaded_by,
+        is_live=bool(ref.get("is_live")),
+        artifact=artifact,
+    )
 
 
 def _merge_managed_hook(config: dict[str, Any], event: str, command: str) -> bool:

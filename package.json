@@ -1,6 +1,6 @@
 {
   "name": "@schift-io/extension",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Schift Extension for Codex and Claude: runtime wiring, lifecycle hooks, and local APM authoring.",
   "private": false,
   "type": "module",

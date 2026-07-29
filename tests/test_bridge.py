@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from base64 import b64decode
 from pathlib import Path
+from unittest.mock import patch
 
 from apm_bridge.core import (
     HostRuntimeAdapter,
@@ -11,6 +13,7 @@ from apm_bridge.core import (
     create_pack,
     deploy_pack,
     install_extension,
+    publish_pack,
     undeploy_pack,
     uninstall_extension,
     validate_pack,
@@ -242,6 +245,67 @@ class ApmBridgeTests(unittest.TestCase):
             self.assertIn("memory_write", manifest["approval_required_for"])
             self.assertEqual(manifest["agents_md_ref"], "agent.md")
             self.assertTrue(manifest["primary_skill_id"])
+            self.assertEqual(manifest["mcp_servers"][0]["name"], "schift-rag")
+
+    def test_publish_binds_a_sealed_pack_to_the_authenticated_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pack = create_pack(
+                destination=root / "workspace",
+                name="owned-brief",
+                purpose="Prepare an owned registry proof.",
+                model="openai/gpt-5.4-mini",
+                connectors=["schift-memory", "local-model"],
+            )
+            env_file = root / ".env.local"
+            env_file.write_text(
+                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\n",
+                encoding="utf-8",
+            )
+            calls: list[dict] = []
+
+            def fake_request(**kwargs):
+                calls.append(kwargs)
+                if kwargs["method"] == "POST":
+                    body = kwargs["body"]
+                    self.assertEqual(body["make_live"], False)
+                    self.assertEqual(body["visibility"], "private")
+                    self.assertEqual(body["allowed_orgs"], ["room821"])
+                    self.assertTrue(b64decode(body["apm_b64"]))
+                    return {
+                        "ok": True,
+                        "ref": {
+                            "agent_id": "owned-brief",
+                            "version": "0.1.0",
+                            "content_hash": body["expected_hash"],
+                            "owner_org": "room821",
+                            "uploaded_by": "usr_owner",
+                            "is_live": False,
+                        },
+                    }
+                return {
+                    "packs": [
+                        {
+                            "agent_id": "owned-brief",
+                            "owner_org": "room821",
+                            "uploaded_by": "usr_owner",
+                        }
+                    ]
+                }
+
+            with patch("apm_bridge.core._api_json_request", side_effect=fake_request):
+                result = publish_pack(
+                    pack=pack,
+                    root=root,
+                    env_file=env_file,
+                    allowed_orgs=["room821"],
+                )
+
+            self.assertEqual(result.agent_id, "owned-brief")
+            self.assertEqual(result.owner_org, "room821")
+            self.assertEqual(result.uploaded_by, "usr_owner")
+            self.assertFalse(result.is_live)
+            self.assertEqual([call["method"] for call in calls], ["POST", "GET"])
 
 
 if __name__ == "__main__":
