@@ -17,7 +17,7 @@ registry. It creates and validates a local artifact first.
 After this package is published to npm:
 
 ```bash
-npx -y @schift-io/extension install --host both
+npx -y @schift-io/extension install --host both --env-file .env.local
 ```
 
 During repository development:
@@ -34,8 +34,9 @@ node bin/schift-extension.mjs studio
 - Hooks: `@schift-io/ai-memory-hooks` summary/metadata capture definitions.
   Hooks never block a host session.
 
-Credentials remain in `~/.schift/ai-memory/config.json`; the installer never
-writes API keys into host configuration files. Remove the extension with
+`--env-file` reads `SCHIFT_API_URL` and `SCHIFT_API_KEY`, then writes them only
+to `~/.schift/ai-memory/config.json`; the installer never writes API keys into
+Codex or Claude configuration files. Remove the extension with
 `npx -y @schift-io/extension uninstall`. Add `--purge-local-data` only when
 you also want to delete local credentials and queued summaries.
 

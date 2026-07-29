@@ -29,11 +29,15 @@ def cmd_install(args: argparse.Namespace) -> int:
         root=Path(args.root).expanduser(),
         hooks=args.hooks,
         dry_run=args.dry_run,
+        env_file=Path(args.env_file).expanduser() if args.env_file else None,
     )
     action = "would update" if args.dry_run else "updated"
     for target in targets:
         print(f"{action}: {target}")
-    print("Schift Extension installed. Schift MCP remains a Connector; credentials stay outside host config.")
+    if args.env_file:
+        print("Schift credentials were written only to ~/.schift/ai-memory/config.json, never host config.")
+    else:
+        print("Schift Extension installed. Run with --env-file .env.local or login to configure local credentials.")
     return 0
 
 
@@ -118,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--host", choices=["codex", "claude", "both"], default="both")
     install.add_argument("--root", default="~")
     install.add_argument("--hooks", action="store_true", default=True)
+    install.add_argument("--env-file", help="copy SCHIFT_API_URL and SCHIFT_API_KEY into the private Schift local config")
     install.add_argument("--dry-run", action="store_true")
     install.set_defaults(func=cmd_install)
     uninstall = sub.add_parser("uninstall", help="remove only entries managed by Schift Extension")

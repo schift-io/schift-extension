@@ -9,6 +9,19 @@ from apm_bridge.core import create_pack, install_extension, uninstall_extension,
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_installer_provisions_private_env_config_without_host_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_file = root / ".env.local"
+            env_file.write_text("SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\nSCHIFT_BUCKET_ID=stale-id\n", encoding="utf-8")
+            install_extension(hosts=["codex"], root=root, hooks=True, dry_run=False, env_file=env_file)
+            config = json.loads((root / ".schift" / "ai-memory" / "config.json").read_text(encoding="utf-8"))
+            host_config = (root / ".codex" / "config.toml").read_text(encoding="utf-8")
+            self.assertEqual(config["api_base_url"], "https://api.example.test")
+            self.assertEqual(config["api_key"], "sch_test_key")
+            self.assertEqual(config["bucket"], "default")
+            self.assertNotIn("sch_test_key", host_config)
+
     def test_installer_merges_both_harnesses_without_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

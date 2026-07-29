@@ -559,6 +559,45 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _env_values(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise ValueError(f"env file not found: {path}")
+    values: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _provision_env_config(root: Path, env_file: Path, dry_run: bool) -> Path:
+    values = _env_values(env_file)
+    api_base_url = values.get("SCHIFT_API_BASE_URL") or values.get("SCHIFT_API_URL")
+    api_key = values.get("SCHIFT_API_KEY")
+    if not api_base_url or not api_key:
+        raise ValueError("env file needs SCHIFT_API_URL (or SCHIFT_API_BASE_URL) and SCHIFT_API_KEY")
+    config_path = root / ".schift" / "ai-memory" / "config.json"
+    config = _json_object(config_path)
+    config.update({
+        "api_base_url": api_base_url.rstrip("/"),
+        "api_key": api_key,
+        "bucket": values.get("SCHIFT_COMPANY_BUCKET") or values.get("SCHIFT_DEFAULT_BUCKET") or "default",
+        "collection": values.get("SCHIFT_COLLECTION") or "__schift_ai_daily_log",
+        "status": "configured_from_env_file",
+    })
+    if not dry_run:
+        _write_json(config_path, config)
+    return config_path
+
+
 def _merge_managed_hook(config: dict[str, Any], event: str, command: str) -> bool:
     hooks = config.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -586,8 +625,10 @@ def _remove_managed_hook(config: dict[str, Any], event: str, command: str) -> bo
     return changed
 
 
-def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: bool) -> list[Path]:
+def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: bool, env_file: Path | None = None) -> list[Path]:
     targets: list[Path] = []
+    if env_file is not None:
+        targets.append(_provision_env_config(root, env_file, dry_run))
     for host in hosts:
         if host == "codex":
             path = root / ".codex" / "config.toml"
