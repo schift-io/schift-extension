@@ -2,6 +2,10 @@ const form = document.querySelector("#pack-form");
 const result = document.querySelector("#result");
 const purpose = form.elements.purpose;
 const model = form.elements.model;
+const source = form.elements.source;
+const sourceFile = document.querySelector("#source-file");
+const dropzone = document.querySelector("#source-dropzone");
+const sourceState = document.querySelector("#source-state");
 const capabilityGraph = document.querySelector("#capability-graph");
 const connector = document.querySelector("#svg-connector");
 const memory = document.querySelector("#svg-memory");
@@ -16,31 +20,35 @@ function shorten(value, limit) {
   return normalized.length > limit ? `${normalized.slice(0, limit - 1)}…` : normalized;
 }
 
+function escapeHTML(value) {
+  return value.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+}
+
 function selectedConnectors() {
-  return [...form.querySelectorAll('input[name="connector"]:checked')].map(
-    (input) => input.value,
-  );
+  return [...form.querySelectorAll('input[name="connector"]:checked')].map((input) => input.value);
 }
 
 function renderGraph() {
   const connectors = selectedConnectors();
   const modelName = model.options[model.selectedIndex].text;
-  const graphPurpose = purpose.value || "업무 목적";
-  document.querySelector("#graph-purpose").textContent = shorten(graphPurpose, 44);
-  document.querySelector("#svg-model").textContent = shorten(modelName.replace(/^Codex \/ /, ""), 19);
   const hasMemory = connectors.includes("schift-memory");
   const hasWrite = connectors.includes("schift-write");
   const scope = hasWrite ? "read + approved write" : hasMemory ? "read only" : "not connected";
+  const sourceName = source.dataset.name || (source.value ? source.value.split("/").pop() : "New pack");
+  document.querySelector("#svg-host").textContent = shorten(sourceName, 20);
+  document.querySelector("#svg-source-detail").textContent = source.value ? "imported local source" : "no imported skill";
+  document.querySelector("#svg-model").textContent = shorten(modelName.replace(/^Codex \/ /, ""), 19);
+  document.querySelector("#graph-purpose").textContent = shorten(purpose.value || "Reviewable evidence response", 44);
   connector.textContent = hasMemory || hasWrite ? "Schift MCP" : "Local only";
   document.querySelector("#svg-scope").textContent = scope;
   memory.textContent = hasMemory ? "Memory" : "No recall";
-  tools.textContent = hasWrite ? "Memory read + approved write" : hasMemory ? "Memory read" : "No Schift data access";
+  tools.textContent = hasWrite ? "Memory read + approved write" : hasMemory ? "Memory read" : "No Schift access";
   memoryNode.classList.toggle("is-disabled", !hasMemory);
   memoryFlow.classList.toggle("is-disabled", !hasMemory);
   writeNode.classList.toggle("is-disabled", !hasWrite);
   writeFlow.classList.toggle("is-disabled", !hasWrite);
   document.querySelector("#svg-write-detail").textContent = hasWrite ? "approval required" : "not connected";
-  capabilityGraph.setAttribute("aria-label", `${shorten(graphPurpose, 60)}. ${modelName} 실행. Schift ${scope}.`);
+  capabilityGraph.setAttribute("aria-label", `${shorten(purpose.value || "New pack", 60)}. ${modelName}. Schift ${scope}.`);
 }
 
 function renderResult(payload, isError = false) {
@@ -48,47 +56,55 @@ function renderResult(payload, isError = false) {
   result.classList.toggle("is-error", isError);
   result.classList.toggle("is-success", !isError);
   const messages = payload.messages || [payload.error];
-  result.innerHTML = `
-    <p class="kicker">03 / VERIFY</p>
-    <h2>${isError ? "생성하지 못했습니다." : "로컬 APM을 검증했습니다."}</h2>
-    <p>${isError ? "입력은 유지됩니다. 경로와 필수 값을 확인한 뒤 다시 시도하세요." : "봉인된 로컬 아티팩트가 준비되었습니다."}</p>
-    <ul>${messages.map((message) => `<li>${message}</li>`).join("")}</ul>
-    ${payload.pack ? `<code>${payload.pack}</code>` : ""}
-    ${payload.artifact ? `<code>${payload.artifact}</code>` : ""}
-  `;
+  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2><ul>${messages.map((message) => `<li>${escapeHTML(message)}</li>`).join("")}</ul>${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}`;
 }
 
-for (const field of [purpose, model, ...form.querySelectorAll('input[name="connector"]')]) {
+async function stageDroppedFile(file) {
+  if (!file) return;
+  sourceState.textContent = `IMPORTING / ${file.name}`;
+  try {
+    const response = await fetch("/api/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: file.name, content: await file.text() }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "could not stage source");
+    source.value = payload.source;
+    source.dataset.name = file.name;
+    sourceState.textContent = `STAGED / ${file.name}`;
+    renderGraph();
+  } catch (error) {
+    sourceState.textContent = `IMPORT FAILED / ${error.message}`;
+  }
+}
+
+dropzone.addEventListener("click", () => sourceFile.click());
+sourceFile.addEventListener("change", () => stageDroppedFile(sourceFile.files[0]));
+for (const eventName of ["dragenter", "dragover"]) dropzone.addEventListener(eventName, (event) => { event.preventDefault(); dropzone.classList.add("is-dragging"); });
+for (const eventName of ["dragleave", "drop"]) dropzone.addEventListener(eventName, (event) => { event.preventDefault(); dropzone.classList.remove("is-dragging"); });
+dropzone.addEventListener("drop", (event) => stageDroppedFile(event.dataTransfer.files[0]));
+
+for (const field of [purpose, model, source, ...form.querySelectorAll('input[name="connector"]')]) {
   field.addEventListener("input", renderGraph);
   field.addEventListener("change", renderGraph);
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const submit = form.querySelector("button");
+  const submit = form.querySelector("button[type=submit]");
   submit.disabled = true;
-  submit.textContent = "만드는 중";
+  submit.querySelector("span").textContent = "Building";
   const data = new FormData(form);
-  const payload = {
-    name: data.get("name"),
-    purpose: data.get("purpose"),
-    model: data.get("model"),
-    source: data.get("source"),
-    connectors: selectedConnectors(),
-  };
   try {
-    const response = await fetch("/api/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.json();
-    renderResult(body, !response.ok || !body.ok);
+    const response = await fetch("/api/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: data.get("name"), purpose: data.get("purpose"), model: data.get("model"), source: data.get("source"), connectors: selectedConnectors() }) });
+    const payload = await response.json();
+    renderResult(payload, !response.ok || !payload.ok);
   } catch (error) {
-    renderResult({ error: `로컬 작성기와 통신하지 못했습니다: ${error.message}` }, true);
+    renderResult({ error: `Local Studio is unavailable: ${error.message}` }, true);
   } finally {
     submit.disabled = false;
-    submit.textContent = "APM 만들기";
+    submit.querySelector("span").textContent = "Build APM";
   }
 });
 

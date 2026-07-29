@@ -1,162 +1,94 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Codex와 Claude 작업을 Schift APM으로 구조화하고 검증하는 로컬 작성기"
-    />
-    <title>Schift APM Bridge Studio</title>
+    <meta name="description" content="Local APM authoring for Codex and Claude." />
+    <title>Schift APM Studio</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div class="brand"><span>SCHIFT</span> EXTENSION <b>APM STUDIO</b></div>
-        <p><i></i> LOCAL AUTHORING</p>
-      </header>
-
-      <section class="intro" aria-labelledby="authoring-title">
-        <p class="eyebrow">PACK AUTHORING / 01</p>
-        <h1 id="authoring-title">실행 조건을 먼저<br />구조화합니다.</h1>
-        <p>Claude 또는 Codex가 실행하고, Schift는 근거와 저장만 담당합니다. 아래 선택이 곧 APM의 실행 경계입니다.</p>
+    <main class="desk">
+      <section class="source-panel" aria-label="Source input">
+        <p class="panel-index">01 / SOURCE</p>
+        <button id="source-dropzone" class="drop-zone" type="button">
+          <span class="drop-mark">+</span>
+          <span><b>Drop a source file</b><small>SKILL.md · AGENTS.md · agent.md</small></span>
+        </button>
+        <input id="source-file" type="file" accept=".md,text/markdown" hidden />
+        <p id="source-state" class="source-state">NO SOURCE / NEW PACK</p>
+        <label class="path-field">
+          <span>or paste a local path</span>
+          <input name="source" form="pack-form" placeholder="/path/to/SKILL.md" />
+        </label>
       </section>
 
-      <section class="workspace">
-        <div class="form-panel">
-          <div class="section-heading">
-            <p class="eyebrow">DEFINE</p>
-            <h2>이 APM이 할 일</h2>
-          </div>
-          <form id="pack-form">
-            <label>
-              <span>팩 이름</span>
-              <input name="name" value="my-workflow" required pattern="[a-z0-9-]+" />
-            </label>
-            <label>
-              <span>목적</span>
-              <textarea name="purpose" required>회사 근거를 검색해 검토 가능한 초안을 만든다.</textarea>
-            </label>
-            <label>
-              <span>실행 모델</span>
-              <select name="model">
-                <option value="openai/gpt-5.4-mini">Codex / GPT-5.4 mini</option>
-                <option value="anthropic/claude-sonnet">Claude Sonnet</option>
-                <option value="google/gemini-3-flash">Gemini Flash</option>
-              </select>
-            </label>
-            <label>
-              <span>가져올 Skill 또는 Agent</span>
-              <input name="source" placeholder="SKILL.md · AGENTS.md · agent.md 경로" />
-              <small>비워 두면 이 목적에서 새 APM 구조를 만듭니다.</small>
-            </label>
-            <fieldset>
-              <legend>연결 범위</legend>
-              <label class="choice">
+      <section class="build-panel" aria-label="Pack configuration">
+        <p class="panel-index">02 / CONFIGURE</p>
+        <form id="pack-form">
+          <label>
+            <span>Pack ID</span>
+            <input name="name" value="my-workflow" required pattern="[a-z0-9-]+" />
+          </label>
+          <label>
+            <span>Purpose</span>
+            <textarea name="purpose" required>Draft a reviewable response from company evidence.</textarea>
+          </label>
+          <label>
+            <span>Host model</span>
+            <select name="model">
+              <option value="openai/gpt-5.4-mini">Codex / GPT-5.4 mini</option>
+              <option value="anthropic/claude-sonnet">Claude Sonnet</option>
+              <option value="google/gemini-3-flash">Gemini Flash</option>
+            </select>
+          </label>
+          <fieldset>
+            <legend>Capabilities</legend>
+            <div class="capability-grid">
+              <label class="capability">
                 <input type="checkbox" name="connector" value="schift-memory" checked />
-                <span><strong>근거 읽기</strong><small>Schift Memory 검색과 인용</small></span>
+                <span class="check">✓</span>
+                <span><b>Memory read</b><small>Search and cite Schift evidence</small></span>
               </label>
-              <label class="choice">
+              <label class="capability">
                 <input type="checkbox" name="connector" value="schift-write" />
-                <span><strong>승인 write-back</strong><small>승인된 사실과 문서만 저장</small></span>
+                <span class="check">✓</span>
+                <span><b>Approved write</b><small>Store only after explicit approval</small></span>
               </label>
-              <label class="choice">
+              <label class="capability">
                 <input type="checkbox" name="connector" value="local-model" checked />
-                <span><strong>내 구독 모델</strong><small>모델 실행과 비용은 Claude/Codex에 남김</small></span>
+                <span class="check">✓</span>
+                <span><b>Host subscription</b><small>Claude or Codex runs the model</small></span>
               </label>
-            </fieldset>
-            <button type="submit"><span>APM 만들기</span><b>↗</b></button>
-          </form>
-        </div>
-
-        <aside class="preview-panel" aria-labelledby="graph-title">
-          <div class="preview-header">
-            <div>
-              <p class="eyebrow">LIVE STRUCTURE / 02</p>
-              <h2 id="graph-title">실행 그래프</h2>
             </div>
-            <span class="runtime-status">RUNTIME READY</span>
-          </div>
-
-          <div class="svg-frame">
-            <svg id="capability-graph" viewBox="0 0 760 540" role="img" aria-labelledby="svg-title svg-description">
-              <title id="svg-title">APM 실행 구조</title>
-              <desc id="svg-description">Claude 또는 Codex 호스트가 APM과 모델을 실행하고, Schift Connector가 Memory 및 승인된 write-back에 연결되는 구조입니다.</desc>
-              <defs>
-                <pattern id="dot-grid" width="16" height="16" patternUnits="userSpaceOnUse">
-                  <circle cx="1" cy="1" r="1" fill="currentColor" opacity=".18" />
-                </pattern>
-                <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                  <path d="M0 0 L8 4 L0 8 Z" fill="currentColor" />
-                </marker>
-              </defs>
-              <rect class="svg-grid" x="0" y="0" width="760" height="540" rx="16" />
-              <g class="svg-lane">
-                <line x1="28" y1="54" x2="732" y2="54" />
-                <text x="30" y="38">YOUR HOST RUNTIME</text>
-                <line x1="28" y1="320" x2="732" y2="320" />
-                <text x="30" y="304">SCHIFT CONNECTOR / DATA PLANE</text>
-              </g>
-              <g class="svg-flow">
-                <path d="M236 175 C278 175 290 140 326 140" marker-end="url(#arrow)" />
-                <path d="M434 140 C476 140 486 175 524 175" marker-end="url(#arrow)" />
-                <path d="M380 196 L380 374" marker-end="url(#arrow)" />
-                <path id="memory-flow" d="M326 428 C278 428 270 460 236 460" marker-end="url(#arrow)" />
-                <path id="write-flow" d="M434 428 C482 428 490 460 524 460" marker-end="url(#arrow)" />
-              </g>
-              <g class="graph-node graph-node--host">
-                <rect x="44" y="118" width="192" height="114" rx="13" />
-                <text class="node-kicker" x="64" y="150">HOST</text>
-                <text id="svg-host" class="node-title" x="64" y="178">Claude / Codex</text>
-                <text class="node-detail" x="64" y="205">skill · agent · hooks</text>
-              </g>
-              <g class="graph-node graph-node--apm">
-                <rect x="326" y="82" width="108" height="114" rx="13" />
-                <text class="node-kicker" x="346" y="116">PACK</text>
-                <text class="node-title" x="346" y="146">APM</text>
-                <text class="node-detail" x="346" y="170">policy</text>
-              </g>
-              <g class="graph-node graph-node--model">
-                <rect x="524" y="118" width="192" height="114" rx="13" />
-                <text class="node-kicker" x="544" y="150">MODEL</text>
-                <text id="svg-model" class="node-title" x="544" y="178">GPT-5.4 mini</text>
-                <text class="node-detail" x="544" y="205">your subscription</text>
-              </g>
-              <g class="graph-node graph-node--connector">
-                <rect x="286" y="374" width="188" height="108" rx="13" />
-                <text class="node-kicker" x="306" y="406">CONNECTOR</text>
-                <text id="svg-connector" class="node-title" x="306" y="434">Schift MCP</text>
-                <text id="svg-scope" class="node-detail" x="306" y="460">read only</text>
-              </g>
-              <g id="memory-node" class="graph-node graph-node--memory">
-                <rect x="44" y="406" width="192" height="108" rx="13" />
-                <text class="node-kicker" x="64" y="438">RECALL</text>
-                <text id="svg-memory" class="node-title" x="64" y="466">Memory</text>
-                <text class="node-detail" x="64" y="491">search · cite</text>
-              </g>
-              <g id="write-node" class="graph-node graph-node--write is-disabled">
-                <rect x="524" y="406" width="192" height="108" rx="13" />
-                <text class="node-kicker" x="544" y="438">WRITE-BACK</text>
-                <text class="node-title" x="544" y="466">Approved facts</text>
-                <text id="svg-write-detail" class="node-detail" x="544" y="491">not connected</text>
-              </g>
-            </svg>
-          </div>
-
-          <div class="graph-readout" aria-live="polite">
-            <p><span>PACK PURPOSE</span><strong id="graph-purpose">검토 가능한 업무</strong></p>
-            <p><span>ACCESS SCOPE</span><strong id="graph-tools">Memory read</strong></p>
-          </div>
-          <p class="boundary-note"><b>경계:</b> Schift는 모델을 실행하지 않습니다. 데이터 조회·인용·승인 저장만 Connector를 통해 수행합니다.</p>
-        </aside>
+          </fieldset>
+          <button type="submit"><span>Build APM</span><b>Enter ↵</b></button>
+        </form>
       </section>
 
-      <section id="result" class="result is-empty" aria-live="polite">
-        <div><p class="eyebrow">VERIFY / 03</p><h2>생성 전 검증 대기</h2></div>
-        <p>APM을 만들면 호스트 경계와 로컬 패키지 무결성을 여기서 바로 확인합니다.</p>
-      </section>
+      <aside class="graph-panel" aria-label="APM runtime graph">
+        <p class="panel-index">03 / RUNTIME</p>
+        <svg id="capability-graph" viewBox="0 0 800 620" role="img" aria-labelledby="svg-title svg-description">
+          <title id="svg-title">APM runtime graph</title>
+          <desc id="svg-description">The local host runs the APM and model. The Schift connector provides evidence retrieval and optional approved write-back.</desc>
+          <defs>
+            <pattern id="dot-grid" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" /></pattern>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" /></marker>
+          </defs>
+          <rect class="svg-grid" x="0" y="0" width="800" height="620" rx="8" />
+          <g class="svg-lane"><line x1="34" y1="64" x2="766" y2="64" /><text x="36" y="42">LOCAL HOST</text><line x1="34" y1="356" x2="766" y2="356" /><text x="36" y="334">SCHIFT DATA PLANE</text></g>
+          <g class="svg-flow"><path d="M258 196 C310 196 314 150 350 150" marker-end="url(#arrow)" /><path d="M450 150 C492 150 500 196 542 196" marker-end="url(#arrow)" /><path d="M400 220 L400 406" marker-end="url(#arrow)" /><path id="memory-flow" d="M350 470 C302 470 296 510 258 510" marker-end="url(#arrow)" /><path id="write-flow" d="M450 470 C498 470 504 510 542 510" marker-end="url(#arrow)" /></g>
+          <g class="graph-node graph-node--host"><rect x="58" y="132" width="200" height="128" rx="8" /><text class="node-kicker" x="80" y="166">SOURCE</text><text id="svg-host" class="node-title" x="80" y="198">New pack</text><text id="svg-source-detail" class="node-detail" x="80" y="228">no imported skill</text></g>
+          <g class="graph-node graph-node--apm"><rect x="350" y="86" width="100" height="134" rx="8" /><text class="node-kicker" x="370" y="122">PACK</text><text class="node-title" x="370" y="158">APM</text><text class="node-detail" x="370" y="188">policy</text></g>
+          <g class="graph-node graph-node--model"><rect x="542" y="132" width="200" height="128" rx="8" /><text class="node-kicker" x="564" y="166">MODEL</text><text id="svg-model" class="node-title" x="564" y="198">GPT-5.4 mini</text><text class="node-detail" x="564" y="228">host subscription</text></g>
+          <g class="graph-node graph-node--connector"><rect x="300" y="406" width="200" height="118" rx="8" /><text class="node-kicker" x="322" y="440">CONNECTOR</text><text id="svg-connector" class="node-title" x="322" y="472">Schift MCP</text><text id="svg-scope" class="node-detail" x="322" y="500">read only</text></g>
+          <g id="memory-node" class="graph-node graph-node--memory"><rect x="58" y="454" width="200" height="116" rx="8" /><text class="node-kicker" x="80" y="488">RECALL</text><text id="svg-memory" class="node-title" x="80" y="520">Memory</text><text class="node-detail" x="80" y="546">search · cite</text></g>
+          <g id="write-node" class="graph-node graph-node--write is-disabled"><rect x="542" y="454" width="200" height="116" rx="8" /><text class="node-kicker" x="564" y="488">WRITE-BACK</text><text class="node-title" x="564" y="520">Approved facts</text><text id="svg-write-detail" class="node-detail" x="564" y="546">not connected</text></g>
+        </svg>
+        <div class="graph-readout" aria-live="polite"><p><span>PURPOSE</span><strong id="graph-purpose">Reviewable evidence response</strong></p><p><span>SCOPE</span><strong id="graph-tools">Memory read</strong></p></div>
+      </aside>
     </main>
+    <section id="result" class="result is-empty" aria-live="polite"><p>READY</p><span>Drop a source or configure a new pack.</span></section>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

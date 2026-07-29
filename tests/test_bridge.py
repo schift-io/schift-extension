@@ -6,9 +6,21 @@ import unittest
 from pathlib import Path
 
 from apm_bridge.core import create_pack, install_extension, uninstall_extension, validate_pack
+from apm_bridge.studio import stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_dropped_markdown_source_is_staged_for_pack_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = stage_dropped_source(
+                destination=Path(tmp),
+                name="SKILL.md",
+                content="# Contract review\n\nUse cited evidence only.\n",
+            )
+            self.assertTrue(source.is_file())
+            self.assertEqual(source.parent.name, ".studio-imports")
+            self.assertEqual(source.read_text(encoding="utf-8"), "# Contract review\n\nUse cited evidence only.\n")
+
     def test_installer_provisions_private_env_config_without_host_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
