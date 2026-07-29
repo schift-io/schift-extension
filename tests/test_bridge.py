@@ -5,11 +5,81 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from apm_bridge.core import create_pack, install_extension, uninstall_extension, validate_pack
+from apm_bridge.core import (
+    create_pack,
+    deploy_pack,
+    install_extension,
+    undeploy_pack,
+    uninstall_extension,
+    validate_pack,
+    verify_deployment,
+)
 from apm_bridge.studio import resolve_generated_manifest, stage_dropped_source
 
 
 class ApmBridgeTests(unittest.TestCase):
+    def test_deploy_installs_claude_and_codex_server_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            (source / "SKILL.md").write_text(
+                "# Evidence brief\n\nUse Schift evidence and cite it.", encoding="utf-8"
+            )
+            env_file = root / ".env.local"
+            env_file.write_text(
+                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\n",
+                encoding="utf-8",
+            )
+            pack = create_pack(
+                destination=root / "workspace",
+                name="evidence-brief",
+                purpose="Prepare a cited evidence brief.",
+                model="anthropic/claude-sonnet",
+                connectors=["schift-memory", "local-model"],
+                source=source,
+            )
+            with self.assertRaisesRegex(ValueError, "server needs .*config"):
+                deploy_pack(
+                    pack=pack,
+                    hosts=["claude"],
+                    root=root / "missing-config-home",
+                    hooks=True,
+                )
+            blocked_skill = root / "blocked-home" / ".claude" / "skills" / "schift-evidence-brief" / "SKILL.md"
+            blocked_skill.parent.mkdir(parents=True)
+            blocked_skill.write_text("# User-owned skill\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-managed claude skill"):
+                deploy_pack(
+                    pack=pack,
+                    hosts=["claude"],
+                    root=root / "blocked-home",
+                    hooks=True,
+                    env_file=env_file,
+                )
+            deployed = deploy_pack(
+                pack=pack,
+                hosts=["claude", "codex"],
+                root=root / "server-home",
+                hooks=True,
+                env_file=env_file,
+            )
+            server = root / "server-home"
+            launcher = server / ".local" / "bin" / "schift-claude-evidence-brief"
+            self.assertTrue(deployed.release.is_dir())
+            self.assertTrue((server / ".claude" / "skills" / "schift-evidence-brief" / "SKILL.md").is_file())
+            self.assertTrue((server / ".codex" / "skills" / "schift-evidence-brief" / "SKILL.md").is_file())
+            self.assertTrue(launcher.is_file())
+            self.assertIn("--mcp-config", launcher.read_text(encoding="utf-8"))
+            self.assertIn("--append-system-prompt", launcher.read_text(encoding="utf-8"))
+            verification = verify_deployment(
+                agent_id="evidence-brief", hosts=["claude", "codex"], root=server
+            )
+            self.assertTrue(verification.ok, verification.messages)
+            undeploy_pack(agent_id="evidence-brief", hosts=["claude", "codex"], root=server)
+            self.assertFalse((server / ".schift-extension" / "packs" / "evidence-brief").exists())
+            self.assertFalse(launcher.exists())
+
     def test_mcp_upload_only_accepts_generated_pack_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "workspace"

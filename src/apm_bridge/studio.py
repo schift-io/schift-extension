@@ -10,7 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from apm_bridge.core import CONNECTORS, create_pack, validate_pack
+from apm_bridge.core import CONNECTORS, create_pack, deploy_pack, validate_pack
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 MCP_UPLOADER = Path(__file__).resolve().parents[1] / "mcp-upload.mjs"
@@ -84,7 +84,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         route = urlparse(self.path).path
-        if route not in {"/api/create", "/api/import", "/api/upload-mcp"}:
+        if route not in {"/api/create", "/api/import", "/api/upload-mcp", "/api/deploy"}:
             self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             return
         try:
@@ -104,6 +104,26 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 )
                 upload = upload_manifest_via_mcp(manifest=manifest)
                 self._json(HTTPStatus.OK, {"ok": True, "upload": upload})
+                return
+            if route == "/api/deploy":
+                pack = resolve_generated_manifest(
+                    destination=self.output, value=str(payload["pack"])
+                ).parent
+                deployment = deploy_pack(
+                    pack=pack,
+                    hosts=["claude", "codex"],
+                    root=Path.home(),
+                    hooks=True,
+                )
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "agent_id": deployment.agent_id,
+                        "release": str(deployment.release),
+                        "launcher": str(Path.home() / ".local" / "bin" / f"schift-claude-{deployment.agent_id}"),
+                    },
+                )
                 return
             source = Path(payload["source"]).expanduser() if payload.get("source") else None
             pack = create_pack(

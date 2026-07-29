@@ -4,7 +4,9 @@ import json
 import re
 import gzip
 import io
+import shlex
 import shutil
+import subprocess
 import tarfile
 from dataclasses import dataclass
 from hashlib import sha256
@@ -40,6 +42,14 @@ class ValidationResult:
     ok: bool
     messages: list[str]
     artifact: Path | None = None
+
+
+@dataclass(frozen=True)
+class DeploymentResult:
+    agent_id: str
+    release: Path
+    artifact: Path
+    targets: list[Path]
 
 
 def _quote_yaml(value: str) -> str:
@@ -692,3 +702,262 @@ def uninstall_extension(*, hosts: list[str], root: Path, purge_local_data: bool)
     if purge_local_data:
         data = root / ".schift" / "ai-memory"; shutil.rmtree(data, ignore_errors=True); targets.append(data)
     return targets
+
+
+def _host_skill_path(root: Path, host: str, agent_id: str) -> Path:
+    if host == "claude":
+        return root / ".claude" / "skills" / f"schift-{agent_id}" / "SKILL.md"
+    if host == "codex":
+        return root / ".codex" / "skills" / f"schift-{agent_id}" / "SKILL.md"
+    raise ValueError(f"unknown host: {host}")
+
+
+def _deployed_skill(manifest: dict[str, Any], source: Path) -> str:
+    purpose = str(manifest.get("purpose") or "Run this Schift workflow.")
+    skill_id = _safe_name(str(manifest["agent_id"]))
+    body = source.read_text(encoding="utf-8").lstrip()
+    return (
+        "---\n"
+        f"name: schift-{skill_id}\n"
+        f"description: {json.dumps(purpose)}\n"
+        "metadata:\n"
+        "  schift-extension: true\n"
+        "---\n\n"
+        f"# Schift {str(manifest.get('name') or skill_id)}\n\n"
+        f"{body}"
+    )
+
+
+def _claude_launcher(*, release: Path, agent_id: str) -> str:
+    return (
+        "#!/usr/bin/env sh\n"
+        "# Managed by Schift Extension. Remove with `schift-extension undeploy`.\n"
+        "set -eu\n"
+        f"PACK={json.dumps(str(release))}\n"
+        "exec claude --mcp-config \"$PACK/runtime/claude/.mcp.json\" "
+        "--append-system-prompt \"$(cat \"$PACK/agent.md\")\" \"$@\"\n"
+    )
+
+
+def _requires_schift_config(manifest: dict[str, Any]) -> bool:
+    connectors = manifest.get("connectors", [])
+    return isinstance(connectors, list) and any(name in {"schift-memory", "schift-write"} for name in connectors)
+
+
+def _assert_managed_or_missing(path: Path, marker: str, label: str) -> None:
+    if path.exists() and marker not in path.read_text(encoding="utf-8"):
+        raise ValueError(f"refusing to overwrite non-managed {label}: {path}")
+
+
+def deploy_pack(
+    *,
+    pack: Path,
+    hosts: list[str],
+    root: Path,
+    hooks: bool,
+    env_file: Path | None = None,
+    bin_dir: Path | None = None,
+    dry_run: bool = False,
+) -> DeploymentResult:
+    pack = pack.resolve()
+    validation = validate_pack(pack)
+    if not validation.ok or validation.artifact is None:
+        raise ValueError("cannot deploy an invalid pack: " + "; ".join(validation.messages))
+    manifest = json.loads((pack / "pack.json").read_text(encoding="utf-8"))
+    agent_id = _safe_name(str(manifest["agent_id"]))
+    build = json.loads((pack / "dist" / "build.json").read_text(encoding="utf-8"))
+    release_id = str(build["content_hash"])[:16]
+    release = root / ".schift-extension" / "packs" / agent_id / release_id
+    source_skill = pack / str(manifest["skills"][0]["path"])
+    targets: list[Path] = []
+
+    config_path = root / ".schift" / "ai-memory" / "config.json"
+    if _requires_schift_config(manifest) and env_file is None and not dry_run and not config_path.is_file():
+        raise ValueError("server needs ~/.schift/ai-memory/config.json; pass --env-file or provision it before deploy")
+    for host in hosts:
+        _assert_managed_or_missing(_host_skill_path(root, host, agent_id), "schift-extension: true", f"{host} skill")
+    if "claude" in hosts:
+        launcher_root = bin_dir or (root / ".local" / "bin")
+        _assert_managed_or_missing(
+            launcher_root / f"schift-claude-{agent_id}", "Managed by Schift Extension", "Claude launcher"
+        )
+
+    if not dry_run:
+        release.parent.mkdir(parents=True, exist_ok=True)
+        if not release.exists():
+            shutil.copytree(pack, release, ignore=shutil.ignore_patterns("__pycache__"))
+        _write_json(
+            release.parent / "active.json",
+            {
+                "agent_id": agent_id,
+                "release": str(release),
+                "artifact": str(validation.artifact),
+                "content_hash": build["content_hash"],
+            },
+        )
+    targets.extend(install_extension(hosts=hosts, root=root, hooks=hooks, dry_run=dry_run, env_file=env_file))
+
+    for host in hosts:
+        target = _host_skill_path(root, host, agent_id)
+        targets.append(target)
+        if not dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(_deployed_skill(manifest, source_skill), encoding="utf-8")
+
+    if "claude" in hosts:
+        launcher_root = bin_dir or (root / ".local" / "bin")
+        launcher = launcher_root / f"schift-claude-{agent_id}"
+        targets.append(launcher)
+        if not dry_run:
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_text(_claude_launcher(release=release, agent_id=agent_id), encoding="utf-8")
+            launcher.chmod(0o700)
+
+    return DeploymentResult(agent_id=agent_id, release=release, artifact=validation.artifact, targets=targets)
+
+
+def verify_deployment(*, agent_id: str, hosts: list[str], root: Path, bin_dir: Path | None = None) -> ValidationResult:
+    safe_id = _safe_name(agent_id)
+    active_path = root / ".schift-extension" / "packs" / safe_id / "active.json"
+    if not active_path.is_file():
+        return ValidationResult(False, [f"no active deployment for {safe_id}"])
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    release = Path(str(active.get("release", "")))
+    messages: list[str] = []
+    if not (release / "pack.json").is_file():
+        messages.append("active pack manifest is missing")
+    if not (release / "runtime" / "bridge.json").is_file():
+        messages.append("active runtime bridge is missing")
+    if (release / "pack.json").is_file():
+        manifest = json.loads((release / "pack.json").read_text(encoding="utf-8"))
+        if _requires_schift_config(manifest) and not (root / ".schift" / "ai-memory" / "config.json").is_file():
+            messages.append("private Schift MCP config is missing")
+    for host in hosts:
+        if not _host_skill_path(root, host, safe_id).is_file():
+            messages.append(f"{host} skill is not installed")
+    if "claude" in hosts:
+        launcher = (bin_dir or (root / ".local" / "bin")) / f"schift-claude-{safe_id}"
+        if not launcher.is_file() or not launcher.stat().st_mode & 0o100:
+            messages.append("Claude launcher is not executable")
+    return ValidationResult(not messages, messages or ["server runtime deployment is complete"])
+
+
+def undeploy_pack(*, agent_id: str, hosts: list[str], root: Path, bin_dir: Path | None = None) -> list[Path]:
+    safe_id = _safe_name(agent_id)
+    targets: list[Path] = []
+    for host in hosts:
+        skill = _host_skill_path(root, host, safe_id)
+        shutil.rmtree(skill.parent, ignore_errors=True)
+        targets.append(skill.parent)
+    if "claude" in hosts:
+        launcher = (bin_dir or (root / ".local" / "bin")) / f"schift-claude-{safe_id}"
+        if launcher.is_file() and "Managed by Schift Extension" in launcher.read_text(encoding="utf-8"):
+            launcher.unlink()
+        targets.append(launcher)
+    deployment = root / ".schift-extension" / "packs" / safe_id
+    shutil.rmtree(deployment, ignore_errors=True)
+    targets.append(deployment)
+    return targets
+
+
+def _remote_value(value: str) -> str:
+    if value == "$HOME":
+        return '"$HOME"'
+    if value.startswith("$HOME/"):
+        return '"$HOME"/' + shlex.quote(value.removeprefix("$HOME/"))
+    return shlex.quote(value)
+
+
+def _ssh(target: str, script: str, *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    if not target or target.startswith("-"):
+        raise ValueError("SSH target must be a host or user@host, not an option")
+    return subprocess.run(
+        ["ssh", target, "sh", "-lc", script],
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _remote_env_fragment(env_file: Path) -> str:
+    values = _env_values(env_file)
+    api_url = values.get("SCHIFT_API_BASE_URL") or values.get("SCHIFT_API_URL")
+    api_key = values.get("SCHIFT_API_KEY")
+    if not api_url or not api_key:
+        raise ValueError("env file needs SCHIFT_API_URL (or SCHIFT_API_BASE_URL) and SCHIFT_API_KEY")
+    allowed = {
+        "SCHIFT_API_URL": api_url,
+        "SCHIFT_API_KEY": api_key,
+        "SCHIFT_COMPANY_BUCKET": values.get("SCHIFT_COMPANY_BUCKET", ""),
+        "SCHIFT_DEFAULT_BUCKET": values.get("SCHIFT_DEFAULT_BUCKET", ""),
+        "SCHIFT_COLLECTION": values.get("SCHIFT_COLLECTION", ""),
+    }
+    return "".join(f"{key}={value}\n" for key, value in allowed.items() if value)
+
+
+def ship_pack(
+    *,
+    pack: Path,
+    hosts: list[str],
+    target: str,
+    remote_root: str,
+    remote_bin_dir: str,
+    copy_env: bool,
+    env_file: Path | None,
+) -> list[str]:
+    pack = pack.resolve()
+    validation = validate_pack(pack)
+    if not validation.ok:
+        raise ValueError("cannot ship an invalid pack: " + "; ".join(validation.messages))
+    manifest = json.loads((pack / "pack.json").read_text(encoding="utf-8"))
+    agent_id = _safe_name(str(manifest["agent_id"]))
+    build = json.loads((pack / "dist" / "build.json").read_text(encoding="utf-8"))
+    stage_name = f"{agent_id}-{str(build['content_hash'])[:16]}"
+    root_value = _remote_value(remote_root)
+    bin_value = _remote_value(remote_bin_dir)
+    setup = f"set -eu; ROOT={root_value}; STAGE=\"$ROOT/.schift-extension/staging/{stage_name}\"; mkdir -p \"$STAGE\""
+    result = _ssh(target, setup)
+    if result.returncode:
+        raise OSError(result.stderr.strip() or "could not create remote deployment staging directory")
+
+    extract = f"set -eu; ROOT={root_value}; STAGE=\"$ROOT/.schift-extension/staging/{stage_name}\"; tar -xzf - -C \"$STAGE\""
+    archive = subprocess.Popen(
+        ["tar", "--exclude=__pycache__", "-C", str(pack), "-czf", "-", "."],
+        stdout=subprocess.PIPE,
+    )
+    assert archive.stdout is not None
+    result = subprocess.run(
+        ["ssh", target, "sh", "-lc", extract],
+        stdin=archive.stdout,
+        text=False,
+        capture_output=True,
+        check=False,
+    )
+    archive.stdout.close()
+    archive.wait()
+    if archive.returncode or result.returncode:
+        raise OSError(result.stderr.decode().strip() or "could not copy the APM pack to the server")
+
+    env_arg = ""
+    if copy_env:
+        if env_file is None:
+            raise ValueError("--copy-env requires --env-file")
+        env_path = "$STAGE/.schift-extension.env"
+        write_env = f"set -eu; ROOT={root_value}; STAGE=\"$ROOT/.schift-extension/staging/{stage_name}\"; umask 077; cat > \"{env_path}\""
+        result = _ssh(target, write_env, input_text=_remote_env_fragment(env_file))
+        if result.returncode:
+            raise OSError(result.stderr.strip() or "could not provision the remote Schift credentials")
+        env_arg = f' --env-file "{env_path}"'
+
+    host_arg = "both" if set(hosts) == {"codex", "claude"} else hosts[0]
+    deploy = (
+        f"set -eu; ROOT={root_value}; BIN={bin_value}; STAGE=\"$ROOT/.schift-extension/staging/{stage_name}\"; "
+        "cd /tmp; "
+        f"npx -y @schift-io/extension@latest deploy \"$STAGE\" --host {host_arg} --root \"$ROOT\" --bin-dir \"$BIN\"{env_arg}; "
+        "rm -f \"$STAGE/.schift-extension.env\""
+    )
+    result = _ssh(target, deploy)
+    if result.returncode:
+        raise OSError(result.stderr.strip() or "remote deploy failed")
+    return [line for line in result.stdout.splitlines() if line]

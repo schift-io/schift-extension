@@ -59,10 +59,34 @@ function renderResult(payload, isError = false) {
   const upload = payload.pack && !isError
     ? `<button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Upload manifest to Schift MCP</button><span id="upload-state">Keeps the sealed .apm local. Queues pack.json for Schift search.</span>`
     : "";
+  const deploy = payload.pack && !isError
+    ? `<button id="deploy-runtime" type="button" data-pack="${escapeHTML(payload.pack)}">Install in this server runtime</button><span id="deploy-state">Installs Claude and Codex skills, MCP wiring, hooks, and the Claude launcher.</span>`
+    : "";
   const detail = isError
     ? `<span>${escapeHTML(messages[0] || "Build failed")}</span>`
     : `<span>${messages.length} local checks passed</span>`;
-  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}${upload}`;
+  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}${deploy}${upload}`;
+  result.querySelector("#deploy-runtime")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const state = result.querySelector("#deploy-state");
+    button.disabled = true;
+    button.textContent = "Installing runtime";
+    try {
+      const response = await fetch("/api/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack: button.dataset.pack }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body.ok) throw new Error(body.error || "runtime deployment failed");
+      state.textContent = `Installed ${body.agent_id}. Run ${body.launcher} to start this Claude agent.`;
+      button.textContent = "Runtime installed";
+    } catch (error) {
+      state.textContent = `Runtime install failed: ${error.message}`;
+      button.disabled = false;
+      button.textContent = "Retry runtime install";
+    }
+  });
   result.querySelector("#upload-mcp")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const state = result.querySelector("#upload-state");

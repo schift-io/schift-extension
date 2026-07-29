@@ -78,6 +78,38 @@ customer-brief.agent/
 The local UI is intentionally a structured editor, not a YAML editor. YAML
 remains an emitted review artifact because existing APM tooling consumes it.
 
+## Server Deployment
+
+`deploy` installs a validated pack into the current server account. It copies
+the immutable pack release under `~/.schift-extension/packs`, installs the
+skill into both host skill directories, wires the shared Schift MCP and hooks,
+and creates a Claude launcher that always loads the pack's instruction and MCP
+configuration.
+
+```bash
+# Run on the server, after Claude/Codex and Node are installed.
+npx -y @schift-io/extension@latest deploy ./customer-brief.agent \
+  --host both --env-file .env.local
+
+# Claude uses the deployed instruction and pack-specific MCP config.
+~/.local/bin/schift-claude-customer-brief
+
+# Check or remove one pack. This does not remove shared MCP credentials.
+npx -y @schift-io/extension@latest verify-deploy customer-brief
+npx -y @schift-io/extension@latest undeploy customer-brief
+```
+
+From a workstation, send the pack over SSH and invoke the same server-side
+deploy lifecycle. The server must already have its private Schift MCP config,
+or use `--copy-env` to send only the required Schift variables over SSH stdin.
+
+```bash
+npx -y @schift-io/extension@latest ship ./customer-brief.agent \
+  --target deploy@server.example --host both
+```
+
+APM artifacts never contain Claude credentials, SSH keys, or Schift API keys.
+
 ## Studio MCP Upload
 
 After a local build, Studio exposes an explicit **Upload manifest to Schift
