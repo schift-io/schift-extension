@@ -57,15 +57,18 @@ function renderResult(payload, isError = false) {
   result.classList.toggle("is-success", !isError);
   const messages = payload.messages || [payload.error];
   const upload = payload.pack && !isError
-    ? `<button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Publish private APM</button><span id="upload-state">Registers this sealed pack to your current Schift account. It stays non-live.</span>`
+    ? `<div class="result-action"><button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Publish private APM</button><span id="upload-state">Registers this sealed pack to your current Schift account. It stays non-live.</span></div>`
     : "";
   const deploy = payload.pack && !isError
-    ? `<button id="deploy-runtime" type="button" data-pack="${escapeHTML(payload.pack)}">Install in Codex + Claude</button><span id="deploy-state">Adds local skills, Schift MCP, hooks, and the Claude launcher to this computer.</span>`
+    ? `<div class="result-action"><button id="deploy-runtime" type="button" data-pack="${escapeHTML(payload.pack)}">Install in Codex + Claude</button><span id="deploy-state">Adds local skills, Schift MCP, hooks, and the Claude launcher to this computer.</span></div>`
     : "";
   const detail = isError
     ? `<span>${escapeHTML(messages[0] || "Build failed")}</span>`
     : `<span>${messages.length} local checks passed</span>`;
-  result.innerHTML = `<p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}${payload.artifact ? `<code>${escapeHTML(payload.artifact)}</code>` : ""}${deploy}${upload}`;
+  const artifact = payload.artifact
+    ? `<details class="result-artifact"><summary>Local artifact</summary><code>${escapeHTML(payload.artifact)}</code></details>`
+    : "";
+  result.innerHTML = `<div class="result-summary"><p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}</div>${artifact}${deploy}${upload}`;
   result.querySelector("#deploy-runtime")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const state = result.querySelector("#deploy-state");

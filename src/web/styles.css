@@ -58,12 +58,18 @@ button:disabled { opacity:.6; cursor:wait; }
 .graph-readout span { display:block; margin-bottom:6px; color:var(--muted); font:700 10px var(--mono); letter-spacing:.08em; }
 .graph-readout strong { display:block; overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
 .result { display:flex; min-width:1120px; align-items:center; gap:20px; min-height:80px; margin:16px 24px 24px; padding:18px 22px; border:1px solid #d7d7d2; border-radius:10px; background:#fff; box-shadow:0 8px 22px rgba(0,0,0,.035); }
-.result > p { margin:0; font:700 11px var(--mono); letter-spacing:.08em; }
-.result > span,.result > p:not(.panel-index) { color:var(--muted); font-size:13px; }
+.result:not(.is-empty) { display:grid; grid-template-columns:minmax(175px,.8fr) minmax(170px,.75fr) minmax(260px,1fr) minmax(260px,1fr); align-items:start; gap:18px; }
+.result-summary { display:grid; align-content:start; gap:5px; min-width:0; }
+.result-summary > p { margin:0; font:700 11px var(--mono); letter-spacing:.08em; }
+.result-summary > span { color:var(--muted); font-size:13px; }
 .result h2 { margin:0; font-size:17px; }
 .result ul { margin:0; padding-left:16px; color:var(--muted); font-size:12px; }
-.result code { overflow-wrap:anywhere; border:1px solid var(--line); padding:6px 8px; color:var(--muted); font:11px/1.4 var(--mono); }
-.result button { flex:0 0 auto; border:1px solid var(--ink); border-radius:5px; background:#fff; color:var(--ink); padding:8px 10px; font-size:12px; font-weight:700; cursor:pointer; }
+.result-artifact { min-width:0; color:var(--muted); font:11px/1.4 var(--mono); }
+.result-artifact summary { cursor:pointer; font-weight:700; }
+.result-artifact code { display:block; max-height:78px; margin-top:8px; overflow:auto; overflow-wrap:anywhere; border:1px solid var(--line); padding:6px 8px; color:var(--muted); font:inherit; }
+.result-action { display:grid; align-content:start; gap:8px; min-width:0; }
+.result-action span { color:var(--muted); font-size:12px; line-height:1.35; }
+.result button { justify-self:start; border:1px solid var(--ink); border-radius:5px; background:#fff; color:var(--ink); padding:8px 10px; font-size:12px; font-weight:700; cursor:pointer; }
 .result button:hover { background:var(--soft); }
 .result button:disabled { cursor:wait; }
 .result.is-success { border-top:2px solid var(--ink); }
