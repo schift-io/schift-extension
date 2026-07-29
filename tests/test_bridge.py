@@ -4,8 +4,10 @@ import json
 import tempfile
 import unittest
 from base64 import b64decode
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from apm_bridge.core import (
     HostRuntimeAdapter,
@@ -307,6 +309,41 @@ class ApmBridgeTests(unittest.TestCase):
             self.assertEqual(result.uploaded_by, "usr_owner")
             self.assertFalse(result.is_live)
             self.assertEqual([call["method"] for call in calls], ["POST", "GET"])
+
+    def test_registry_request_retries_transient_failure(self) -> None:
+        from apm_bridge.core import _api_json_request
+
+        class SuccessResponse:
+            def read(self) -> bytes:
+                return b'{"ok": true}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                return None
+
+        transient = HTTPError(
+            "https://api.example.test/v1/apm/registry/packs/upload",
+            500,
+            "internal server error",
+            hdrs=None,
+            fp=BytesIO(b'{"message":"temporary"}'),
+        )
+        with (
+            patch("apm_bridge.core.urlopen", side_effect=[transient, SuccessResponse()]) as request,
+            patch("apm_bridge.core.time.sleep") as sleep,
+        ):
+            result = _api_json_request(
+                method="POST",
+                url="https://api.example.test/v1/apm/registry/packs/upload",
+                api_key="publish-key",
+                body={"apm_b64": "bytes"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(0.5)
 
 
 if __name__ == "__main__":

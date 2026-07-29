@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import time
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -646,6 +647,10 @@ def _api_error_detail(payload: bytes) -> str:
     return str(value)
 
 
+_APM_REGISTRY_RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+_APM_REGISTRY_MAX_ATTEMPTS = 3
+
+
 def _api_json_request(*, method: str, url: str, api_key: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     request = Request(
@@ -659,24 +664,29 @@ def _api_json_request(*, method: str, url: str, api_key: str, body: dict[str, An
             "User-Agent": "schift-extension/apm-publisher",
         },
     )
-    try:
-        with urlopen(request, timeout=60) as response:
-            value = json.loads(response.read().decode("utf-8"))
-    except HTTPError as error:
-        detail = _api_error_detail(error.read())
-        if error.code == 401:
-            raise ValueError(
-                "APM registry authentication failed (401). Configure a Schift user/org credential, "
-                "not only a document-ingest key."
-            ) from error
-        if error.code == 403:
-            raise ValueError(
-                "APM registry publish was denied (403). The credential needs agents:manage "
-                "or an organization-admin session with an active org context."
-            ) from error
-        raise ValueError(f"APM registry request failed ({error.code}): {detail}") from error
-    except URLError as error:
-        raise ValueError(f"could not reach the APM registry: {error.reason}") from error
+    for attempt in range(1, _APM_REGISTRY_MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=90) as response:
+                value = json.loads(response.read().decode("utf-8"))
+            break
+        except HTTPError as error:
+            detail = _api_error_detail(error.read())
+            if error.code == 401:
+                raise ValueError(
+                    "APM registry authentication failed (401). Configure a Schift user/org credential, "
+                    "not only a document-ingest key."
+                ) from error
+            if error.code == 403:
+                raise ValueError(
+                    "APM registry publish was denied (403). The credential needs agents:manage "
+                    "or an organization-admin session with an active org context."
+                ) from error
+            if error.code not in _APM_REGISTRY_RETRYABLE_STATUS_CODES or attempt == _APM_REGISTRY_MAX_ATTEMPTS:
+                raise ValueError(f"APM registry request failed ({error.code}): {detail}") from error
+        except URLError as error:
+            if attempt == _APM_REGISTRY_MAX_ATTEMPTS:
+                raise ValueError(f"could not reach the APM registry: {error.reason}") from error
+        time.sleep(0.5 * attempt)
     if not isinstance(value, dict):
         raise ValueError("APM registry returned an invalid JSON object")
     return value
