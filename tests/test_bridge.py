@@ -98,7 +98,7 @@ class ApmBridgeTests(unittest.TestCase):
             )
             env_file = root / ".env.local"
             env_file.write_text(
-                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_ingest_key\nSCHIFT_APM_PUBLISH_API_KEY=sch_publish_key\n",
+                "SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_ingest_key\nSCHIFT_APM_PUBLISH_API_KEY=sch_publish_key\nSCHIFT_DEFAULT_BUCKET_ID=fedcba9876543210fedcba9876543210\nSCHIFT_RAG_BUCKET_ID=0123456789abcdef0123456789abcdef\n",
                 encoding="utf-8",
             )
             pack = create_pack(
@@ -181,13 +181,15 @@ class ApmBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             env_file = root / ".env.local"
-            env_file.write_text("SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\nSCHIFT_BUCKET_ID=stale-id\n", encoding="utf-8")
+            env_file.write_text("SCHIFT_API_URL=https://api.example.test\nSCHIFT_API_KEY=sch_test_key\nSCHIFT_BUCKET_ID=stale-id\nSCHIFT_DEFAULT_BUCKET_ID=fedcba9876543210fedcba9876543210\nSCHIFT_RAG_BUCKET_ID=0123456789abcdef0123456789abcdef\n", encoding="utf-8")
             install_extension(hosts=["codex"], root=root, hooks=True, dry_run=False, env_file=env_file)
             config = json.loads((root / ".schift" / "ai-memory" / "config.json").read_text(encoding="utf-8"))
             host_config = (root / ".codex" / "config.toml").read_text(encoding="utf-8")
             self.assertEqual(config["api_base_url"], "https://api.example.test")
             self.assertEqual(config["api_key"], "sch_test_key")
             self.assertEqual(config["bucket"], "default")
+            self.assertEqual(config["session_bucket_id"], "0123456789abcdef0123456789abcdef")
+            self.assertEqual(config["bucket_id"], "fedcba9876543210fedcba9876543210")
             self.assertNotIn("sch_test_key", host_config)
 
     def test_installer_merges_both_harnesses_without_credentials(self) -> None:
@@ -206,8 +208,10 @@ class ApmBridgeTests(unittest.TestCase):
 
             self.assertIn("[mcp_servers.schift]", codex)
             self.assertIn("@schift-io/mcp", codex)
+            self.assertIn("NODE_OPTIONS", codex)
             self.assertNotIn("SCHIFT_API_KEY =", codex)
             self.assertEqual(claude["mcpServers"]["schift"]["command"], "npx")
+            self.assertEqual(claude["mcpServers"]["schift"]["env"]["NODE_OPTIONS"], "--dns-result-order=ipv4first")
             self.assertIn("Stop", claude_hooks["hooks"])
 
             uninstall_extension(hosts=["codex", "claude"], root=root, purge_local_data=False)

@@ -22,8 +22,12 @@ try {
   await client.connect(
     new StdioClientTransport({
       command: "npx",
-      args: ["-y", "@schift-io/ai-memory-mcp@latest"],
-      env: { ...process.env, SCHIFT_AI_MEMORY_ENABLE_WORKFLOW_TOOLS: "1" },
+      args: ["--yes", "--package=@schift-io/mcp", "schift-mcp"],
+      env: {
+        ...process.env,
+        NODE_OPTIONS: "--dns-result-order=ipv4first",
+        SCHIFT_AI_MEMORY_ENABLE_WORKFLOW_TOOLS: "1",
+      },
     }),
   );
   const result = await client.callTool({

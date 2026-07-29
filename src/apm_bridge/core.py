@@ -18,6 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_ENDPOINT = "https://mcp.schift.io/mcp"
+DEFAULT_SESSION_BUCKET = "agent-hub-session-memory"
+MCP_NODE_OPTIONS = "--dns-result-order=ipv4first"
 
 CONNECTORS: dict[str, dict[str, Any]] = {
     "schift-memory": {
@@ -117,14 +119,7 @@ def _runtime_contract(connectors: list[str], endpoint: str) -> dict[str, Any]:
 
 
 def _native_mcp_config() -> dict[str, Any]:
-    return {
-        "mcpServers": {
-            "schift": {
-                "command": "npx",
-                "args": ["--yes", "--package=@schift-io/mcp", "schift-mcp"],
-            }
-        }
-    }
+    return {"mcpServers": {MCP_RUNTIME.server_name: MCP_RUNTIME.mcp_config()}}
 
 
 def _write_native_projection(pack: Path, skill_name: str, skill_text: str) -> None:
@@ -602,17 +597,71 @@ def _provision_env_config(root: Path, env_file: Path, dry_run: bool) -> Path:
         raise ValueError("env file needs SCHIFT_API_URL (or SCHIFT_API_BASE_URL) and SCHIFT_API_KEY")
     config_path = root / ".schift" / "ai-memory" / "config.json"
     config = _json_object(config_path)
+    company_bucket = values.get("SCHIFT_COMPANY_BUCKET") or values.get("SCHIFT_DEFAULT_BUCKET") or "default"
+    session_bucket = values.get("SCHIFT_RAG_BUCKET") or DEFAULT_SESSION_BUCKET
+    bucket_ids = _resolve_bucket_ids(
+        api_base_url=api_base_url.rstrip("/"),
+        api_key=api_key,
+        configured={
+            company_bucket: values.get("SCHIFT_COMPANY_BUCKET_ID") or values.get("SCHIFT_DEFAULT_BUCKET_ID"),
+            session_bucket: values.get("SCHIFT_RAG_BUCKET_ID"),
+        },
+    )
     config.update({
         "api_base_url": api_base_url.rstrip("/"),
         "api_key": api_key,
         "apm_publish_api_key": values.get("SCHIFT_APM_PUBLISH_API_KEY") or config.get("apm_publish_api_key"),
-        "bucket": values.get("SCHIFT_COMPANY_BUCKET") or values.get("SCHIFT_DEFAULT_BUCKET") or "default",
+        "bucket": company_bucket,
+        "bucket_id": bucket_ids[company_bucket],
+        "session_bucket": session_bucket,
+        "session_bucket_id": bucket_ids[session_bucket],
         "collection": values.get("SCHIFT_COLLECTION") or "__schift_ai_daily_log",
         "status": "configured_from_env_file",
     })
+    config.pop("collection_id", None)
     if not dry_run:
         _write_json(config_path, config)
     return config_path
+
+
+def _resolve_bucket_ids(*, api_base_url: str, api_key: str, configured: dict[str, str | None]) -> dict[str, str]:
+    resolved = {
+        bucket: bucket_id
+        for bucket, bucket_id in configured.items()
+        if isinstance(bucket_id, str) and re.fullmatch(r"[a-f0-9]{32}", bucket_id, flags=re.IGNORECASE)
+    }
+    unresolved = [bucket for bucket in configured if bucket not in resolved and not re.fullmatch(r"[a-f0-9]{32}", bucket, flags=re.IGNORECASE)]
+    for bucket in configured:
+        if re.fullmatch(r"[a-f0-9]{32}", bucket, flags=re.IGNORECASE):
+            resolved[bucket] = bucket
+    if not unresolved:
+        return resolved
+    request = Request(
+        f"{api_base_url}/v1/buckets",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "schift-extension/0.1",
+            "X-Schift-Client": "schift-extension",
+        },
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError) as error:
+        raise ValueError(f"could not verify Schift buckets: {error}") from error
+    buckets = body if isinstance(body, list) else body.get("buckets", []) if isinstance(body, dict) else []
+    by_name = {
+        entry.get("name"): entry.get("id")
+        for entry in buckets
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and isinstance(entry.get("id"), str)
+    }
+    for bucket in unresolved:
+        if isinstance(by_name.get(bucket), str):
+            resolved[bucket] = by_name[bucket]
+    missing = [bucket for bucket in configured if bucket not in resolved]
+    if missing:
+        raise ValueError(f"Schift bucket(s) not available to this API key: {', '.join(missing)}")
+    return resolved
 
 
 def _publisher_credentials(*, root: Path, env_file: Path | None) -> tuple[str, str]:
@@ -803,12 +852,18 @@ class McpRuntimeSpec:
     args: tuple[str, ...]
     legacy_args: tuple[tuple[str, ...], ...]
     startup_timeout_sec: int = 30
+    env: tuple[tuple[str, str], ...] = ()
 
     def mcp_config(self) -> dict[str, Any]:
-        return {"command": self.command, "args": list(self.args)}
+        config: dict[str, Any] = {"command": self.command, "args": list(self.args)}
+        if self.env:
+            config["env"] = dict(self.env)
+        return config
 
     def known_mcp_configs(self) -> set[str]:
         configs = [self.mcp_config()]
+        if self.env:
+            configs.append({"command": self.command, "args": list(self.args)})
         configs.extend(
             {"command": self.command, "args": list(args)} for args in self.legacy_args
         )
@@ -816,9 +871,14 @@ class McpRuntimeSpec:
 
     def codex_block(self) -> str:
         args = ", ".join(json.dumps(arg) for arg in self.args)
+        env = ""
+        if self.env:
+            entries = ", ".join(f"{key} = {json.dumps(value)}" for key, value in self.env)
+            env = f"env = {{ {entries} }}\n"
         return (
             f"{_MARKER_START}\n[mcp_servers.{self.server_name}]\n"
             f"command = {json.dumps(self.command)}\nargs = [{args}]\n"
+            f"{env}"
             f"startup_timeout_sec = {self.startup_timeout_sec}\n"
             "# Credentials remain in ~/.schift/ai-memory/config.json.\n"
             f"{_MARKER_END}"
@@ -830,6 +890,7 @@ MCP_RUNTIME = McpRuntimeSpec(
     command="npx",
     args=("--yes", "--package=@schift-io/mcp", "schift-mcp"),
     legacy_args=(("-y", "@schift-io/mcp"), ("-y", "@schift-io/ai-memory-mcp")),
+    env=(("NODE_OPTIONS", MCP_NODE_OPTIONS),),
 )
 
 
