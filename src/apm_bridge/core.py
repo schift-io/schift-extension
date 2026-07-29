@@ -106,7 +106,7 @@ def _native_mcp_config() -> dict[str, Any]:
         "mcpServers": {
             "schift": {
                 "command": "npx",
-                "args": ["-y", "@schift-io/ai-memory-mcp"],
+                "args": ["-y", "@schift-io/mcp"],
             }
         }
     }
@@ -643,7 +643,7 @@ def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: boo
         if host == "codex":
             path = root / ".codex" / "config.toml"
             content = path.read_text(encoding="utf-8") if path.exists() else ""
-            block = f"{_MARKER_START}\n[mcp_servers.schift]\ncommand = \"npx\"\nargs = [\"-y\", \"@schift-io/ai-memory-mcp\"]\nstartup_timeout_sec = 30\n# Credentials remain in ~/.schift/ai-memory/config.json.\n{_MARKER_END}"
+            block = f"{_MARKER_START}\n[mcp_servers.schift]\ncommand = \"npx\"\nargs = [\"-y\", \"@schift-io/mcp\"]\nstartup_timeout_sec = 30\n# Credentials remain in ~/.schift/ai-memory/config.json.\n{_MARKER_END}"
             pattern = re.compile(re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.DOTALL)
             if not pattern.search(content) and re.search(r"^\[mcp_servers\.schift\]", content, re.MULTILINE):
                 raise ValueError("Codex already has a non-managed schift MCP entry")
@@ -658,9 +658,15 @@ def install_extension(*, hosts: list[str], root: Path, hooks: bool, dry_run: boo
                 targets.append(hook_path)
         elif host == "claude":
             path = root / ".claude.json"; config = _json_object(path); servers = config.setdefault("mcpServers", {})
-            expected = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
+            expected = {"command": "npx", "args": ["-y", "@schift-io/mcp"]}
+            legacy = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
             if not isinstance(servers, dict): raise ValueError("Claude mcpServers must be a JSON object")
-            if "schift" in servers and servers["schift"] != expected: raise ValueError("Claude already has a non-managed schift MCP entry")
+            known = {
+                json.dumps(expected, sort_keys=True),
+                json.dumps(legacy, sort_keys=True),
+            }
+            if "schift" in servers and json.dumps(servers["schift"], sort_keys=True) not in known:
+                raise ValueError("Claude already has a non-managed schift MCP entry")
             servers["schift"] = expected
             if not dry_run: _write_json(path, config)
             targets.append(path)
@@ -688,8 +694,8 @@ def uninstall_extension(*, hosts: list[str], root: Path, purge_local_data: bool)
             if any(_remove_managed_hook(config, event, command) for event, command in _extension_commands(host)): _write_json(hook_path, config)
             targets.append(hook_path)
         elif host == "claude":
-            path = root / ".claude.json"; config = _json_object(path); expected = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
-            if isinstance(config.get("mcpServers"), dict) and config["mcpServers"].get("schift") == expected:
+            path = root / ".claude.json"; config = _json_object(path); expected = {"command": "npx", "args": ["-y", "@schift-io/mcp"]}; legacy = {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}
+            if isinstance(config.get("mcpServers"), dict) and config["mcpServers"].get("schift") in (expected, legacy):
                 del config["mcpServers"]["schift"]
                 if not config["mcpServers"]: del config["mcpServers"]
                 _write_json(path, config)

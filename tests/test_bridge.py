@@ -135,7 +135,7 @@ class ApmBridgeTests(unittest.TestCase):
             )
 
             self.assertIn("[mcp_servers.schift]", codex)
-            self.assertIn("@schift-io/ai-memory-mcp", codex)
+            self.assertIn("@schift-io/mcp", codex)
             self.assertNotIn("SCHIFT_API_KEY =", codex)
             self.assertEqual(claude["mcpServers"]["schift"]["command"], "npx")
             self.assertIn("Stop", claude_hooks["hooks"])
@@ -143,6 +143,20 @@ class ApmBridgeTests(unittest.TestCase):
             uninstall_extension(hosts=["codex", "claude"], root=root, purge_local_data=False)
             self.assertNotIn("BEGIN SCHIFT EXTENSION", (root / ".codex" / "config.toml").read_text(encoding="utf-8"))
             self.assertNotIn("schift", json.loads((root / ".claude.json").read_text(encoding="utf-8")).get("mcpServers", {}))
+
+    def test_installer_upgrades_and_removes_legacy_claude_mcp_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".claude.json").write_text(
+                json.dumps({"mcpServers": {"schift": {"command": "npx", "args": ["-y", "@schift-io/ai-memory-mcp"]}}}),
+                encoding="utf-8",
+            )
+            install_extension(hosts=["claude"], root=root, hooks=False, dry_run=False)
+            config = json.loads((root / ".claude.json").read_text(encoding="utf-8"))
+            self.assertEqual(config["mcpServers"]["schift"]["args"], ["-y", "@schift-io/mcp"])
+            uninstall_extension(hosts=["claude"], root=root, purge_local_data=False)
+            config = json.loads((root / ".claude.json").read_text(encoding="utf-8"))
+            self.assertNotIn("schift", config.get("mcpServers", {}))
 
     def test_imported_skill_becomes_a_valid_local_pack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

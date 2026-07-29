@@ -3,7 +3,7 @@
 One local extension for two jobs:
 
 1. Install the Schift Extension into Codex and Claude. It wires the existing
-   `@schift-io/ai-memory-mcp` Connector and lifecycle hooks, but does not turn
+   `@schift-io/mcp` Connector and lifecycle hooks, but does not turn
    MCP itself into a harness.
 2. Turn a local `SKILL.md`, `AGENTS.md`, Claude skill, or Codex agent folder
    into a sealed APM pack with an explicit model, connector, MCP, and
