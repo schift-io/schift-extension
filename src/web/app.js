@@ -14,6 +14,9 @@ const memoryNode = document.querySelector("#memory-node");
 const memoryFlow = document.querySelector("#memory-flow");
 const writeNode = document.querySelector("#write-node");
 const writeFlow = document.querySelector("#write-flow");
+const packList = document.querySelector("#pack-list");
+const newPack = document.querySelector("#new-pack");
+let selectedPack = null;
 
 function shorten(value, limit) {
   const normalized = value.trim().replace(/\s+/g, " ");
@@ -28,15 +31,95 @@ function selectedConnectors() {
   return [...form.querySelectorAll('input[name="connector"]:checked')].map((input) => input.value);
 }
 
+function modelLabel(value) {
+  return [...model.options].find((option) => option.value === value)?.textContent || value || "host model";
+}
+
+function setConnectors(connectors) {
+  for (const input of form.querySelectorAll('input[name="connector"]')) {
+    input.checked = connectors.includes(input.value);
+  }
+}
+
+function resetComposer() {
+  selectedPack = null;
+  form.elements.name.readOnly = false;
+  form.elements.name.value = "my-workflow";
+  purpose.value = "Draft a reviewable response from company evidence.";
+  model.value = "openai/gpt-5.4-mini";
+  source.value = "";
+  delete source.dataset.name;
+  sourceState.textContent = "NO SOURCE / NEW PACK";
+  setConnectors(["schift-memory", "local-model"]);
+  form.querySelector('button[type="submit"] span').textContent = "Build APM";
+  result.className = "result is-empty";
+  result.innerHTML = "<p>READY</p><span>Configure a new APM or select one to adjust.</span>";
+  renderGraph();
+  renderPackList();
+}
+
+function selectPack(pack) {
+  selectedPack = pack;
+  form.elements.name.value = pack.agent_id;
+  form.elements.name.readOnly = true;
+  purpose.value = pack.purpose;
+  model.value = pack.model || "openai/gpt-5.4-mini";
+  source.value = "";
+  source.dataset.name = `${pack.agent_id}.agent`;
+  sourceState.textContent = `SELECTED / ${pack.agent_id}`;
+  setConnectors(Array.isArray(pack.connectors) ? pack.connectors : []);
+  form.querySelector('button[type="submit"] span').textContent = "Save selected APM";
+  renderGraph();
+  renderPackList();
+  renderResult({
+    selected: true,
+    pack: pack.pack,
+    artifact: pack.artifact,
+    messages: ["Selected local APM"],
+  });
+}
+
+let inventory = [];
+
+function renderPackList() {
+  if (!inventory.length) {
+    packList.innerHTML = '<p class="inventory-empty">No local APMs yet.</p>';
+    return;
+  }
+  packList.innerHTML = inventory.map((pack) => `
+    <button class="pack-item${selectedPack?.pack === pack.pack ? " is-selected" : ""}" type="button" data-pack="${escapeHTML(pack.pack)}">
+      <b>${escapeHTML(pack.agent_id)}</b>
+      <small>${escapeHTML(modelLabel(pack.model))} · ${escapeHTML((pack.connectors || []).join(", ") || "local only")}</small>
+    </button>`).join("");
+  for (const button of packList.querySelectorAll(".pack-item")) {
+    button.addEventListener("click", () => {
+      const pack = inventory.find((item) => item.pack === button.dataset.pack);
+      if (pack) selectPack(pack);
+    });
+  }
+}
+
+async function loadPacks(selectCurrent = false) {
+  const response = await fetch("/api/packs");
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "could not load local APMs");
+  inventory = Array.isArray(payload.packs) ? payload.packs : [];
+  if (selectCurrent && selectedPack) {
+    selectedPack = inventory.find((item) => item.pack === selectedPack.pack) || selectedPack;
+  }
+  renderPackList();
+}
+
 function renderGraph() {
   const connectors = selectedConnectors();
   const modelName = model.options[model.selectedIndex].text;
   const hasMemory = connectors.includes("schift-memory");
   const hasWrite = connectors.includes("schift-write");
   const scope = hasWrite ? "read + approved write" : hasMemory ? "read only" : "not connected";
+  const hasSource = Boolean(source.dataset.name || source.value);
   const sourceName = source.dataset.name || (source.value ? source.value.split("/").pop() : "New pack");
   document.querySelector("#svg-host").textContent = shorten(sourceName, 20);
-  document.querySelector("#svg-source-detail").textContent = source.value ? "imported local source" : "no imported skill";
+  document.querySelector("#svg-source-detail").textContent = source.dataset.name ? "selected local APM" : source.value ? "imported local source" : "no imported skill";
   document.querySelector("#svg-model").textContent = shorten(modelName.replace(/^Codex \/ /, ""), 19);
   document.querySelector("#graph-purpose").textContent = shorten(purpose.value || "Reviewable evidence response", 44);
   connector.textContent = hasMemory || hasWrite ? "Schift MCP" : "Local only";
@@ -48,7 +131,7 @@ function renderGraph() {
   writeNode.classList.toggle("is-disabled", !hasWrite);
   writeFlow.classList.toggle("is-disabled", !hasWrite);
   document.querySelector("#svg-write-detail").textContent = hasWrite ? "approval required" : "not connected";
-  capabilityGraph.setAttribute("aria-label", `${shorten(purpose.value || "New pack", 60)}. ${modelName}. Schift ${scope}.`);
+  capabilityGraph.setAttribute("aria-label", `${shorten(purpose.value || "New pack", 60)}. ${modelName}. ${hasSource ? "Local APM selected." : "New APM."} Schift ${scope}.`);
 }
 
 function renderResult(payload, isError = false) {
@@ -56,6 +139,7 @@ function renderResult(payload, isError = false) {
   result.classList.toggle("is-error", isError);
   result.classList.toggle("is-success", !isError);
   const messages = payload.messages || [payload.error];
+  const isSelected = payload.selected === true;
   const upload = payload.pack && !isError
     ? `<div class="result-action"><button id="upload-mcp" type="button" data-pack="${escapeHTML(payload.pack)}">Publish private APM</button><span id="upload-state">Registers this sealed pack to your current Schift account. It stays non-live.</span></div>`
     : "";
@@ -64,11 +148,11 @@ function renderResult(payload, isError = false) {
     : "";
   const detail = isError
     ? `<span>${escapeHTML(messages[0] || "Build failed")}</span>`
-    : `<span>${messages.length} local checks passed</span>`;
+    : `<span>${isSelected ? "Select an action for this local APM." : `${messages.length} local checks passed`}</span>`;
   const artifact = payload.artifact
     ? `<details class="result-artifact"><summary>Local artifact</summary><code>${escapeHTML(payload.artifact)}</code></details>`
     : "";
-  result.innerHTML = `<div class="result-summary"><p>${isError ? "BLOCKED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : "Local APM verified"}</h2>${detail}</div>${artifact}${deploy}${upload}`;
+  result.innerHTML = `<div class="result-summary"><p>${isError ? "BLOCKED" : isSelected ? "SELECTED" : "VERIFIED"}</p><h2>${isError ? "Build failed" : isSelected ? "Local APM selected" : "Local APM verified"}</h2>${detail}</div>${artifact}${deploy}${upload}`;
   result.querySelector("#deploy-runtime")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const state = result.querySelector("#deploy-state");
@@ -153,15 +237,35 @@ form.addEventListener("submit", async (event) => {
   submit.querySelector("span").textContent = "Building";
   const data = new FormData(form);
   try {
-    const response = await fetch("/api/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: data.get("name"), purpose: data.get("purpose"), model: data.get("model"), source: data.get("source"), connectors: selectedConnectors() }) });
+    const response = await fetch(selectedPack ? "/api/update" : "/api/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(selectedPack ? { pack: selectedPack.pack } : { name: data.get("name") }),
+        purpose: data.get("purpose"),
+        model: data.get("model"),
+        source: data.get("source"),
+        connectors: selectedConnectors(),
+      }),
+    });
     const payload = await response.json();
     renderResult(payload, !response.ok || !payload.ok);
+    if (response.ok && payload.record) {
+      selectedPack = payload.record;
+      form.elements.name.readOnly = true;
+      form.querySelector('button[type="submit"] span').textContent = "Save selected APM";
+      await loadPacks(true);
+    }
   } catch (error) {
     renderResult({ error: `Local Studio is unavailable: ${error.message}` }, true);
   } finally {
     submit.disabled = false;
-    submit.querySelector("span").textContent = "Build APM";
+    submit.querySelector("span").textContent = selectedPack ? "Save selected APM" : "Build APM";
   }
 });
 
+newPack.addEventListener("click", resetComposer);
+loadPacks().catch((error) => {
+  packList.innerHTML = `<p class="inventory-empty">Could not load local APMs: ${escapeHTML(error.message)}</p>`;
+});
 renderGraph();

@@ -15,6 +15,15 @@ button,input,select,textarea { font:inherit; }
 .drop-zone small { margin-top:5px; color:var(--muted); font-size:12px; line-height:1.4; }
 .source-state { min-height:36px; margin:14px 0 25px; color:var(--muted); font:700 10px/1.4 var(--mono); letter-spacing:.06em; }
 .path-field { display:grid; gap:8px; }
+.pack-inventory { margin-top:28px; border-top:1px solid var(--line); padding-top:16px; }
+.inventory-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; color:var(--muted); font:700 10px var(--mono); letter-spacing:.08em; }
+.inventory-heading button { border:0; background:transparent; color:var(--ink); cursor:pointer; font:700 11px var(--font); }
+.pack-list { display:grid; gap:6px; max-height:250px; overflow:auto; }
+.inventory-empty { margin:0; color:var(--muted); font-size:12px; line-height:1.4; }
+.pack-item { display:grid; gap:4px; width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; padding:9px 10px; color:var(--ink); cursor:pointer; text-align:left; }
+.pack-item:hover,.pack-item.is-selected { border-color:var(--ink); background:var(--soft); }
+.pack-item b { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.pack-item small { overflow:hidden; color:var(--muted); font:10px/1.3 var(--mono); text-overflow:ellipsis; white-space:nowrap; }
 .path-field span,label > span,legend { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.02em; }
 form { display:grid; gap:20px; }
 form > label { display:grid; gap:8px; }

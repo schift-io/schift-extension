@@ -10,10 +10,41 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from apm_bridge.core import CONNECTORS, create_pack, deploy_pack, validate_pack
+from apm_bridge.core import CONNECTORS, create_pack, deploy_pack, update_pack, validate_pack
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 MCP_UPLOADER = Path(__file__).resolve().parents[1] / "mcp-upload.mjs"
+
+
+def studio_pack_record(pack: Path) -> dict:
+    manifest = json.loads((pack / "pack.json").read_text(encoding="utf-8"))
+    dist = pack / "dist"
+    artifacts = sorted(dist.glob("*.apm"), key=lambda path: path.stat().st_mtime, reverse=True) if dist.is_dir() else []
+    model_policy = manifest.get("model_policy")
+    return {
+        "pack": str(pack.resolve()),
+        "agent_id": str(manifest.get("agent_id") or pack.stem.removesuffix(".agent")),
+        "purpose": str(manifest.get("purpose") or ""),
+        "model": str(model_policy.get("default") if isinstance(model_policy, dict) else ""),
+        "connectors": list(manifest.get("connectors") or []),
+        "source": str((pack / "agent.md").resolve()),
+        "artifact": str(artifacts[0]) if artifacts else None,
+    }
+
+
+def list_studio_packs(destination: Path) -> list[dict]:
+    output = destination.resolve()
+    if not output.is_dir():
+        return []
+    records: list[dict] = []
+    for pack in sorted(output.glob("*.agent"), key=lambda path: path.name):
+        if not (pack / "pack.json").is_file():
+            continue
+        try:
+            records.append(studio_pack_record(pack))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return records
 
 
 def stage_dropped_source(*, destination: Path, name: str, content: str) -> Path:
@@ -78,14 +109,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_GET(self) -> None:  # noqa: N802
-        if urlparse(self.path).path == "/api/catalog":
+        route = urlparse(self.path).path
+        if route == "/api/catalog":
             self._json(HTTPStatus.OK, {"connectors": CONNECTORS})
+            return
+        if route == "/api/packs":
+            self._json(HTTPStatus.OK, {"packs": list_studio_packs(self.output)})
             return
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
         route = urlparse(self.path).path
-        if route not in {"/api/create", "/api/import", "/api/upload-mcp", "/api/deploy"}:
+        if route not in {"/api/create", "/api/update", "/api/import", "/api/upload-mcp", "/api/deploy"}:
             self._json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             return
         try:
@@ -127,6 +162,30 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     },
                 )
                 return
+            if route == "/api/update":
+                manifest = resolve_generated_manifest(
+                    destination=self.output, value=str(payload["pack"])
+                )
+                source = Path(payload["source"]).expanduser() if payload.get("source") else None
+                pack = update_pack(
+                    pack=manifest.parent,
+                    purpose=str(payload["purpose"]),
+                    model=str(payload["model"]),
+                    connectors=list(payload["connectors"]),
+                    source=source,
+                )
+                validation = validate_pack(pack)
+                self._json(
+                    HTTPStatus.OK if validation.ok else HTTPStatus.UNPROCESSABLE_ENTITY,
+                    {
+                        "ok": validation.ok,
+                        "messages": validation.messages,
+                        "pack": str(pack),
+                        "artifact": str(validation.artifact) if validation.artifact else None,
+                        "record": studio_pack_record(pack),
+                    },
+                )
+                return
             source = Path(payload["source"]).expanduser() if payload.get("source") else None
             pack = create_pack(
                 destination=self.output,
@@ -144,6 +203,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     "messages": result.messages,
                     "pack": str(pack),
                     "artifact": str(result.artifact) if result.artifact else None,
+                    "record": studio_pack_record(pack),
                 },
             )
         except (KeyError, OSError, ValueError, json.JSONDecodeError) as error:

@@ -125,8 +125,8 @@ def _native_mcp_config() -> dict[str, Any]:
 def _write_native_projection(pack: Path, skill_name: str, skill_text: str) -> None:
     for host, manifest_dir in (("codex", ".codex-plugin"), ("claude", ".claude-plugin")):
         root = pack / "runtime" / host
-        (root / manifest_dir).mkdir(parents=True)
-        (root / "skills" / skill_name).mkdir(parents=True)
+        (root / manifest_dir).mkdir(parents=True, exist_ok=True)
+        (root / "skills" / skill_name).mkdir(parents=True, exist_ok=True)
         (root / "skills" / skill_name / "SKILL.md").write_text(
             skill_text, encoding="utf-8"
         )
@@ -269,6 +269,73 @@ def create_pack(
             name=safe_name,
             purpose=purpose,
             version="0.1.0",
+            skills=[skill_name],
+            connectors=connectors,
+        ),
+        encoding="utf-8",
+    )
+    return pack
+
+
+def update_pack(
+    *,
+    pack: Path,
+    purpose: str,
+    model: str,
+    connectors: list[str],
+    source: Path | None = None,
+    endpoint: str = DEFAULT_ENDPOINT,
+) -> Path:
+    pack = pack.resolve()
+    manifest_path = pack / "pack.json"
+    if not pack.name.endswith(".agent") or not manifest_path.is_file():
+        raise ValueError("update requires a generated .agent directory")
+    unknown = sorted(set(connectors) - set(CONNECTORS))
+    if unknown:
+        raise ValueError(f"unknown connector(s): {', '.join(unknown)}")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    agent_id = _safe_name(str(manifest.get("agent_id") or ""))
+    skills = manifest.get("skills")
+    if not isinstance(skills, list) or not skills or not isinstance(skills[0], dict):
+        raise ValueError("generated pack has no primary skill")
+    skill_path = pack / str(skills[0].get("path") or "")
+    if not skill_path.is_file():
+        raise ValueError("generated pack primary skill is missing")
+
+    if source is not None:
+        _, source_text = _read_source(source.resolve())
+        (pack / "agent.md").write_text(source_text, encoding="utf-8")
+        skill_path.write_text(
+            source_text if source_text.startswith("#") else f"# {agent_id}\n\n{source_text}",
+            encoding="utf-8",
+        )
+
+    runtime = _runtime_contract(connectors, endpoint)
+    manifest["purpose"] = purpose
+    manifest["model_policy"] = {
+        "execution": "host_subscription",
+        "default": model,
+        "provider_lock": False,
+    }
+    manifest["mcp_servers"] = [{**runtime["mcp"], "name": "schift-rag"}]
+    manifest["connectors"] = runtime["connectors"]
+    manifest["runtime_boundary"] = {"host_services_only": _required_capabilities(connectors)}
+    manifest["approval_required_for"] = (
+        ["memory_write", "document_ingest"] if "schift-write" in connectors else []
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (pack / "runtime" / "bridge.json").write_text(
+        json.dumps(runtime, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    skill_name = skill_path.parent.name
+    _write_native_projection(pack, skill_name, skill_path.read_text(encoding="utf-8"))
+    version = str(manifest.get("package_ref") or "@0.1.0").rsplit("@", 1)[-1]
+    (pack / "apm.yml").write_text(
+        _apm_yaml(
+            name=agent_id,
+            purpose=purpose,
+            version=version,
             skills=[skill_name],
             connectors=connectors,
         ),

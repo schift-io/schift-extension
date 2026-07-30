@@ -20,11 +20,17 @@ from apm_bridge.core import (
     publish_pack,
     undeploy_pack,
     uninstall_extension,
+    update_pack,
     validate_pack,
     verify_deployment,
 )
 from apm_bridge.cli import cmd_studio
-from apm_bridge.studio import publish_pack_via_mcp, resolve_generated_manifest, stage_dropped_source
+from apm_bridge.studio import (
+    list_studio_packs,
+    publish_pack_via_mcp,
+    resolve_generated_manifest,
+    stage_dropped_source,
+)
 
 
 class ApmBridgeTests(unittest.TestCase):
@@ -183,6 +189,41 @@ class ApmBridgeTests(unittest.TestCase):
             self.assertEqual(publication["agent_id"], "sample")
             self.assertFalse(publication["is_live"])
             self.assertEqual(run.call_args.args[0][-1], str(pack))
+
+    def test_studio_lists_and_updates_one_pack_without_replacing_others(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            first = create_pack(
+                destination=workspace,
+                name="first-pack",
+                purpose="Prepare the first brief.",
+                model="openai/gpt-5.4-mini",
+                connectors=["schift-memory", "local-model"],
+            )
+            second = create_pack(
+                destination=workspace,
+                name="second-pack",
+                purpose="Prepare the second brief.",
+                model="anthropic/claude-sonnet",
+                connectors=["schift-memory", "local-model"],
+            )
+
+            updated = update_pack(
+                pack=first,
+                purpose="Store reviewed facts after approval.",
+                model="anthropic/claude-sonnet",
+                connectors=["schift-memory", "schift-write", "local-model"],
+            )
+            records = {item["agent_id"]: item for item in list_studio_packs(workspace)}
+            manifest = json.loads((updated / "pack.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(updated, first)
+            self.assertTrue(validate_pack(updated).ok)
+            self.assertTrue(second.is_dir())
+            self.assertEqual(records.keys(), {"first-pack", "second-pack"})
+            self.assertEqual(records["first-pack"]["model"], "anthropic/claude-sonnet")
+            self.assertEqual(manifest["purpose"], "Store reviewed facts after approval.")
+            self.assertIn("schift-write", manifest["connectors"])
 
     def test_dropped_markdown_source_is_staged_for_pack_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
