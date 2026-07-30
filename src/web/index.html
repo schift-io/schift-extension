@@ -66,6 +66,16 @@
               </label>
             </div>
           </fieldset>
+          <fieldset class="mcp-policy">
+            <legend>Schift MCP tools</legend>
+            <p>Choose exactly what this APM may call through Schift MCP.</p>
+            <div class="mcp-grid">
+              <label><input type="checkbox" name="mcp-tool" value="schift_search" checked /><span>Search</span></label>
+              <label><input type="checkbox" name="mcp-tool" value="schift_recall" checked /><span>Recall</span></label>
+              <label><input type="checkbox" name="mcp-tool" value="memory_write" /><span>Write facts</span></label>
+              <label><input type="checkbox" name="mcp-tool" value="document_ingest" /><span>Ingest documents</span></label>
+            </div>
+          </fieldset>
           <button type="submit"><span>Build APM</span><b>Enter ↵</b></button>
         </form>
       </section>

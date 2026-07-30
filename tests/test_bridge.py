@@ -213,6 +213,7 @@ class ApmBridgeTests(unittest.TestCase):
                 purpose="Store reviewed facts after approval.",
                 model="anthropic/claude-sonnet",
                 connectors=["schift-memory", "schift-write", "local-model"],
+                mcp_tools=["schift_search", "memory_write"],
             )
             records = {item["agent_id"]: item for item in list_studio_packs(workspace)}
             manifest = json.loads((updated / "pack.json").read_text(encoding="utf-8"))
@@ -224,6 +225,9 @@ class ApmBridgeTests(unittest.TestCase):
             self.assertEqual(records["first-pack"]["model"], "anthropic/claude-sonnet")
             self.assertEqual(manifest["purpose"], "Store reviewed facts after approval.")
             self.assertIn("schift-write", manifest["connectors"])
+            self.assertEqual(records["first-pack"]["mcp_tools"], ["memory_write", "schift_search"])
+            runtime = json.loads((updated / "runtime" / "bridge.json").read_text(encoding="utf-8"))
+            self.assertEqual(runtime["mcp"]["tools"], ["memory_write", "schift_search"])
 
     def test_dropped_markdown_source_is_staged_for_pack_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

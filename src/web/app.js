@@ -16,6 +16,12 @@ const writeNode = document.querySelector("#write-node");
 const writeFlow = document.querySelector("#write-flow");
 const packList = document.querySelector("#pack-list");
 const newPack = document.querySelector("#new-pack");
+const MCP_TOOL_LABELS = {
+  schift_search: "Search",
+  schift_recall: "Recall",
+  memory_write: "Write facts",
+  document_ingest: "Ingest documents",
+};
 let selectedPack = null;
 
 function shorten(value, limit) {
@@ -31,6 +37,10 @@ function selectedConnectors() {
   return [...form.querySelectorAll('input[name="connector"]:checked')].map((input) => input.value);
 }
 
+function selectedMcpTools() {
+  return [...form.querySelectorAll('input[name="mcp-tool"]:checked')].map((input) => input.value);
+}
+
 function modelLabel(value) {
   return [...model.options].find((option) => option.value === value)?.textContent || value || "host model";
 }
@@ -39,6 +49,31 @@ function setConnectors(connectors) {
   for (const input of form.querySelectorAll('input[name="connector"]')) {
     input.checked = connectors.includes(input.value);
   }
+}
+
+function setMcpTools(tools) {
+  for (const input of form.querySelectorAll('input[name="mcp-tool"]')) {
+    input.checked = tools.includes(input.value);
+  }
+}
+
+function syncConnectorsFromMcpTools() {
+  const tools = selectedMcpTools();
+  const inputs = Object.fromEntries([...form.querySelectorAll('input[name="connector"]')].map((input) => [input.value, input]));
+  inputs["schift-memory"].checked = tools.includes("schift_search") || tools.includes("schift_recall");
+  inputs["schift-write"].checked = tools.includes("memory_write") || tools.includes("document_ingest");
+}
+
+function syncMcpToolsFromConnectors() {
+  const connectors = selectedConnectors();
+  const tools = new Set(selectedMcpTools());
+  for (const tool of ["schift_search", "schift_recall"]) {
+    connectors.includes("schift-memory") ? tools.add(tool) : tools.delete(tool);
+  }
+  for (const tool of ["memory_write", "document_ingest"]) {
+    connectors.includes("schift-write") ? tools.add(tool) : tools.delete(tool);
+  }
+  setMcpTools([...tools]);
 }
 
 function resetComposer() {
@@ -51,6 +86,7 @@ function resetComposer() {
   delete source.dataset.name;
   sourceState.textContent = "NO SOURCE / NEW PACK";
   setConnectors(["schift-memory", "local-model"]);
+  setMcpTools(["schift_search", "schift_recall"]);
   form.querySelector('button[type="submit"] span').textContent = "Build APM";
   result.className = "result is-empty";
   result.innerHTML = "<p>READY</p><span>Configure a new APM or select one to adjust.</span>";
@@ -68,6 +104,7 @@ function selectPack(pack) {
   source.dataset.name = `${pack.agent_id}.agent`;
   sourceState.textContent = `SELECTED / ${pack.agent_id}`;
   setConnectors(Array.isArray(pack.connectors) ? pack.connectors : []);
+  setMcpTools(Array.isArray(pack.mcp_tools) ? pack.mcp_tools : []);
   form.querySelector('button[type="submit"] span').textContent = "Save selected APM";
   renderGraph();
   renderPackList();
@@ -112,9 +149,10 @@ async function loadPacks(selectCurrent = false) {
 
 function renderGraph() {
   const connectors = selectedConnectors();
+  const mcpTools = selectedMcpTools();
   const modelName = model.options[model.selectedIndex].text;
-  const hasMemory = connectors.includes("schift-memory");
-  const hasWrite = connectors.includes("schift-write");
+  const hasMemory = mcpTools.includes("schift_search") || mcpTools.includes("schift_recall");
+  const hasWrite = mcpTools.includes("memory_write") || mcpTools.includes("document_ingest");
   const scope = hasWrite ? "read + approved write" : hasMemory ? "read only" : "not connected";
   const hasSource = Boolean(source.dataset.name || source.value);
   const sourceName = source.dataset.name || (source.value ? source.value.split("/").pop() : "New pack");
@@ -122,10 +160,10 @@ function renderGraph() {
   document.querySelector("#svg-source-detail").textContent = source.dataset.name ? "selected local APM" : source.value ? "imported local source" : "no imported skill";
   document.querySelector("#svg-model").textContent = shorten(modelName.replace(/^Codex \/ /, ""), 19);
   document.querySelector("#graph-purpose").textContent = shorten(purpose.value || "Reviewable evidence response", 44);
-  connector.textContent = hasMemory || hasWrite ? "Schift MCP" : "Local only";
+  connector.textContent = mcpTools.length ? "Schift MCP" : "Local only";
   document.querySelector("#svg-scope").textContent = scope;
   memory.textContent = hasMemory ? "Memory" : "No recall";
-  tools.textContent = hasWrite ? "Memory read + approved write" : hasMemory ? "Memory read" : "No Schift access";
+  tools.textContent = mcpTools.length ? mcpTools.map((tool) => MCP_TOOL_LABELS[tool]).join(" + ") : "No Schift access";
   memoryNode.classList.toggle("is-disabled", !hasMemory);
   memoryFlow.classList.toggle("is-disabled", !hasMemory);
   writeNode.classList.toggle("is-disabled", !hasWrite);
@@ -225,9 +263,21 @@ for (const eventName of ["dragenter", "dragover"]) dropzone.addEventListener(eve
 for (const eventName of ["dragleave", "drop"]) dropzone.addEventListener(eventName, (event) => { event.preventDefault(); dropzone.classList.remove("is-dragging"); });
 dropzone.addEventListener("drop", (event) => stageDroppedFile(event.dataTransfer.files[0]));
 
-for (const field of [purpose, model, source, ...form.querySelectorAll('input[name="connector"]')]) {
+for (const field of [purpose, model, source]) {
   field.addEventListener("input", renderGraph);
   field.addEventListener("change", renderGraph);
+}
+for (const field of form.querySelectorAll('input[name="connector"]')) {
+  field.addEventListener("change", () => {
+    syncMcpToolsFromConnectors();
+    renderGraph();
+  });
+}
+for (const field of form.querySelectorAll('input[name="mcp-tool"]')) {
+  field.addEventListener("change", () => {
+    syncConnectorsFromMcpTools();
+    renderGraph();
+  });
 }
 
 form.addEventListener("submit", async (event) => {
@@ -246,6 +296,7 @@ form.addEventListener("submit", async (event) => {
         model: data.get("model"),
         source: data.get("source"),
         connectors: selectedConnectors(),
+        mcp_tools: selectedMcpTools(),
       }),
     });
     const payload = await response.json();

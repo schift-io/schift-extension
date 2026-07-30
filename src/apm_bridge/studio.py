@@ -21,12 +21,19 @@ def studio_pack_record(pack: Path) -> dict:
     dist = pack / "dist"
     artifacts = sorted(dist.glob("*.apm"), key=lambda path: path.stat().st_mtime, reverse=True) if dist.is_dir() else []
     model_policy = manifest.get("model_policy")
+    mcp_servers = manifest.get("mcp_servers")
+    mcp_tools = (
+        list(mcp_servers[0].get("tools") or [])
+        if isinstance(mcp_servers, list) and mcp_servers and isinstance(mcp_servers[0], dict)
+        else []
+    )
     return {
         "pack": str(pack.resolve()),
         "agent_id": str(manifest.get("agent_id") or pack.stem.removesuffix(".agent")),
         "purpose": str(manifest.get("purpose") or ""),
         "model": str(model_policy.get("default") if isinstance(model_policy, dict) else ""),
         "connectors": list(manifest.get("connectors") or []),
+        "mcp_tools": mcp_tools,
         "source": str((pack / "agent.md").resolve()),
         "artifact": str(artifacts[0]) if artifacts else None,
     }
@@ -173,6 +180,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     model=str(payload["model"]),
                     connectors=list(payload["connectors"]),
                     source=source,
+                    mcp_tools=list(payload.get("mcp_tools") or []),
                 )
                 validation = validate_pack(pack)
                 self._json(
@@ -194,6 +202,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 model=str(payload["model"]),
                 connectors=list(payload["connectors"]),
                 source=source,
+                mcp_tools=list(payload.get("mcp_tools") or []),
             )
             result = validate_pack(pack)
             self._json(

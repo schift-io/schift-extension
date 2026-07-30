@@ -90,15 +90,26 @@ def _read_source(source: Path) -> tuple[str, str]:
     raise ValueError(f"no SKILL.md, AGENTS.md, or agent.md found in {source}")
 
 
-def _runtime_contract(connectors: list[str], endpoint: str) -> dict[str, Any]:
+def _runtime_contract(
+    connectors: list[str], endpoint: str, mcp_tools: list[str] | None = None
+) -> dict[str, Any]:
     selected = [name for name in connectors if name in CONNECTORS]
+    available_tools = {
+        tool
+        for connector in selected
+        for tool in CONNECTORS[connector]["mcp_tools"]
+    }
     tools = sorted(
         {
-            tool
-            for connector in selected
-            for tool in CONNECTORS[connector]["mcp_tools"]
+            tool for tool in (mcp_tools if mcp_tools is not None else available_tools)
         }
     )
+    unsupported_tools = sorted(set(tools) - available_tools)
+    if unsupported_tools:
+        raise ValueError(
+            "selected MCP tool is not available through the chosen connector(s): "
+            + ", ".join(unsupported_tools)
+        )
     return {
         "schema_version": 1,
         "purpose": "Local BYO runtime for Codex and Claude",
@@ -194,6 +205,7 @@ def create_pack(
     connectors: list[str],
     source: Path | None = None,
     endpoint: str = DEFAULT_ENDPOINT,
+    mcp_tools: list[str] | None = None,
 ) -> Path:
     safe_name = _safe_name(name)
     unknown = sorted(set(connectors) - set(CONNECTORS))
@@ -221,7 +233,7 @@ def create_pack(
         encoding="utf-8",
     )
 
-    runtime = _runtime_contract(connectors, endpoint)
+    runtime = _runtime_contract(connectors, endpoint, mcp_tools)
     manifest = {
         "schema_version": 1,
         "agent_id": safe_name,
@@ -285,6 +297,7 @@ def update_pack(
     connectors: list[str],
     source: Path | None = None,
     endpoint: str = DEFAULT_ENDPOINT,
+    mcp_tools: list[str] | None = None,
 ) -> Path:
     pack = pack.resolve()
     manifest_path = pack / "pack.json"
@@ -311,7 +324,7 @@ def update_pack(
             encoding="utf-8",
         )
 
-    runtime = _runtime_contract(connectors, endpoint)
+    runtime = _runtime_contract(connectors, endpoint, mcp_tools)
     manifest["purpose"] = purpose
     manifest["model_policy"] = {
         "execution": "host_subscription",
